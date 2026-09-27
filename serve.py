@@ -18,6 +18,9 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    port = 8080
-    print(f"Parcel Fit → http://127.0.0.1:{port}")
-    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+    import os
+
+    host = os.environ.get("HOST", "0.0.0.0")
+    port = int(os.environ.get("PORT", "8080"))
+    print(f"Parcel Fit → http://{host}:{port}")
+    ThreadingHTTPServer((host, port), Handler).serve_forever()

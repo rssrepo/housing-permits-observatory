@@ -59,13 +59,16 @@ A CDC or planner should confirm the parcel with City Planning / OneStopPGH (ROZA
 
 ## How to run
 
-Studio (matchmaker for judges, static):
+**Live (judges):** https://rssrepo.github.io/housing-permits-observatory/  
+Demo `cdc@hillcdc.org` / `pittsburgh`
+
+Studio locally:
 
 ```bash
 python3 serve.py
 ```
 
-Open http://127.0.0.1:8080 · demo `cdc@hillcdc.org` / `pittsburgh` · you land on **Match**.
+Open http://127.0.0.1:8080 · same demo · you land on **Match**.
 
 Rebuild the citywide lot file from WPRDC (writes `web/data/sites.json`):
 
