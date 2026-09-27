@@ -8,16 +8,11 @@ This is a **decision-support framework**, not a permit, listing rent, eviction m
 
 ## 1. What is being compared
 
-Each **pairing** is one lot × one type:
+Each **pairing** is one lot × one type. The studio ranks two-family, small apartment, single-family, affordable (already-allowed home in a below-typical-income tract), offices, commercial, and industrial. Accessory dwelling is not a type: it is not allowed citywide on these lots.
 
-| Type | Studio label |
-| --- | --- |
-| Two-family house | Duplex |
-| Small apartment building | Small multifamily |
+Walk / Wait / Skip in the UI is the same gate as Visit / Hold / Skip in this spec.
 
-Accessory dwelling is not a type: every lot in this file is `not_allowed` for ADU, so it was removed from ranking.
-
-Lots are real City of Pittsburgh vacant city-owned parcels (WPRDC). The genesis sample is four Hill / East Allegheny lots. The studio pool is 3,260 lots. ACS 2024 5-year is joined by current tract GEOID (retired ids remapped). Lots with no tract id, or a tract with no tables, stay blank.
+Lots are real City of Pittsburgh vacant city-owned parcels (WPRDC). The studio pool is 3,260 lots. ACS 2024 5-year is joined by current tract GEOID (retired ids remapped). Lots with no tract id, or a tract with no tables, stay blank. Nearby finished-home typical is Zillow ZHVI by neighborhood when the name matches; otherwise Census B25077 if present. Headline land is 2024–2025 vacant-lot sales scaled by square feet, not the 2012 tax roll.
 
 The tool **does not** declare one objectively correct neighborhood or type. It ranks pairings under **staff-chosen weights**, then staff walk, hold, or skip.
 
@@ -112,7 +107,7 @@ If rent/income are missing: fall back to burden only, or drop the factor.
 
 ### Transit access (`climate_proxy`)
 
-**Metric:** feet to nearest Port Authority stop (WPRDC PRT GeoJSON, genesis sample).  
+**Metric:** feet to nearest Port Authority stop (WPRDC PRT GeoJSON, all lots in this file).  
 **Meaning:** access to opportunity by bus. **Not** marginal carbon, jobs, or schools.  
 **Score:** 100 at 400 ft, 0 at 2,640 ft, plus a small density add (two-family 8, small apartment 16).
 

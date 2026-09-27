@@ -6,14 +6,9 @@ Parcel Fit does **not** pick a correct lot. It ranks **lot × housing type** pai
 
 ## 1. Unit of ranking
 
-A **pairing** is one vacant city-owned lot and one of two types:
+A **pairing** is one vacant city-owned lot and one type. Two-family and small apartment use `zoning_allows_duplex` / `zoning_allows_small_multifamily`. Single-family, office, commercial, industrial, and affordable use the Chapter 911 reading in `web/assets/zone.js`. Accessory dwelling is not ranked.
 
-| Type key | Label | Zoning field |
-| --- | --- | --- |
-| `duplex` | Two-family house | `zoning_allows_duplex` |
-| `small_multifamily` | Small apartment building | `zoning_allows_small_multifamily` |
-
-Accessory dwelling is not ranked. `zoning_allows_adu` is `not_allowed` on every lot in this file.
+The live UI labels the gate **Walk / Wait / Skip** (same as Visit / Hold / Skip below).
 
 The studio pool is about **3,260** WPRDC city-owned vacant lots. Parks, greenways, hold-for-study, and permanent city ownership are excluded upstream in `build_citywide.py`.
 
@@ -39,7 +34,7 @@ Used only after the call, to order Visit lots against other Visit lots (then Hol
 
 ## 3. How a pairing gets a number
 
-`scoreSite(row, weights)` scores all three types. Each type has five factors. Each factor is either a 0–100 number **from data** or `unknown`.
+`scoreSite(row, weights)` scores every type in `TYPOLOGIES`. Each type has five factors. Each factor is either a 0–100 number **from data** or `unknown`.
 
 **Missing is dropped, never zero.** If a factor is unknown, it is omitted and the remaining staff weights are renormalized onto what exists.
 
@@ -143,8 +138,11 @@ These fields are joined for tradeoffs, tags, and the CDC screen. They **do not**
 | `lihtc_ft`, `lihtc_name` | HUD LIHTC FeatureServer, Pittsburgh | Distance to nearest mapped tax-credit project |
 | `who_note`, `income_vs_city_pct` | Tract ACS income vs city $65,742 | Who lives nearby now, not who gets a future key |
 | ACS GEOID remap | Census geocoder | Retired tract ids (example: Vista `42003563200` → `42003563202`) |
+| `zillow_zhvi_usd` | Zillow Research ZHVI neighborhood | Typical finished home nearby. Not this vacant lot. Unmatched names stay blank. |
+| `land_comp_usd`, `land_sale_usd` | WPRDC 2024–2025 vacant sales | Headline land. 2012 `assess_land_fmv` is a footnote. |
+| `heat_severity` | TPL Heat Severity USA 2023 | Land surface vs city mean, not air temperature. |
 
-**Still not in the model:** operational kilograms of a new building, named future tenant, VPRP eligibility, master-plan polygons, private tax-delinquent stock, schools, health.
+**Still not in the model:** operational kilograms of a new building, named future tenant, VPRP eligibility, master-plan polygons, private tax-delinquent stock, schools, health. Investment leftover is a separate stack (`buildAfford`): it is not the mix number, and it only uses house counts already allowed on the lot.
 
 ## 8. Tradeoff sheet (You get / You give up / Not answered)
 

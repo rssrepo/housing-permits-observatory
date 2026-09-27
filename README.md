@@ -1,84 +1,89 @@
-# Housing Typology Matchmaker
+# Parcel Fit
 
 **Track:** Housing Typology, Equity & Climate Matchmaker  
-**Event:** AI Horizons 2026 — AI for Housing Hackathon (Pittsburgh)  
+**Event:** AI Horizons 2026, AI for Housing Hackathon (Pittsburgh)  
 **Team:** Rahul (solo)
 
-## What this does
+**Live:** https://rssrepo.github.io/housing-permits-observatory/  
+CDC demo desk: `cdc@hillcdc.org` / `pittsburgh` (Hill District CDC as the example shopper). The map is still every empty city lot. After login you land on Home. Set this week’s walk, then use Visits, City map, and Investment.
 
-A CDC-scale studio for **vacant city-owned lot targeting** in Pittsburgh: public ownership, Land Bank / URA / sale pathway, nearby vacant clusters, by-right housing type, then five walks. Weights are user-controlled. Missing inputs are dropped from the composite, not scored as zero.
+## What this is
 
-The ranking specification is [`MATCHING.md`](MATCHING.md). CDC screens and risk notes: [`FRAMEWORK.md`](FRAMEWORK.md).
+A walk-list desk for **vacant lots the City of Pittsburgh already owns**. Staff pick a housing type and where they will actually go. The app shows lots that already allow that type, whether a nearby finished-home sale could cover land plus a simple wood-frame build, and a 3D city map of the same inventory.
 
-## Sites
+It is decision support for who to walk this week. It is not a permit, a listing, legal advice, or a bid.
 
-`sites.csv` is the **Hill CDC genesis sample** (four lots). The live studio reads `web/data/sites.json`: **3,260 vacant city-owned lots** in 77 neighborhoods, built by `build_citywide.py` from the WPRDC dump. Parks, greenways, hold-for-study, and permanent city ownership are out. ACS is filled only for tracts already pulled in `sites.csv` (mainly 501 and 305); other tracts stay blank.
+The ranking spec is [`MATCHING.md`](MATCHING.md). CDC screens: [`FRAMEWORK.md`](FRAMEWORK.md).
 
-| Genesis sample | Why it was picked first |
+## What you can do
+
+- **Visits:** Walk / Wait / Skip from zoning. Mix score only orders lots that share a call. Missing inputs are dropped, never scored as zero.
+- **City map:** Color all ~3,260 lots by mix, flood, hills, heat, trees, bus, or your visits. Click a peg to add that PIN to Visits.
+- **Investment:** Nearby Zillow typical home, this lot's land from 2024-2025 vacant sales, wood-frame hard cost at $180/sf. Leftover math uses only house counts the district already allows. HOME $261,595 per 2-bedroom is a subsidy ceiling, not construction cost.
+- **Find a lot / Compare / This lot / How it works:** Search by address or PIN, compare two lots or two types, copy a PIN, read every public file we joined.
+
+## Lots
+
+The studio reads `web/data/sites.json`: **3,260 vacant city-owned lots** in **76 named neighborhoods** (one lot has no neighborhood in the city file). Built by `build_citywide.py` from the WPRDC dump. Parks, greenways, and permanent city ownership are out.
+
+Each lot is keyed by **county PIN**. Pegs do not share IDs.
+
+`sites.csv` is only the original four Hill / East Allegheny sample rows used while the citywide file was built. The live app does not rank from that CSV.
+
+| Sample row | Why it was first |
 | --- | --- |
-| 2523 Centre Ave (Middle Hill, RM-M, Available for Sale) | Hill corridor, URA transfer |
-| 2901 Centre Ave (Middle Hill, LNC, Available for Sale) | Same corridor, LNC |
-| 1800 Cliff St (Crawford-Roberts, RM-M, CDC Property Reserve) | CDC earmark, larger lot |
-| 849 Vista St (East Allegheny, R1A-VH, CDC Property Reserve) | ACS geography does not match; left blank |
+| 2523 Centre Ave (Middle Hill, RM-M) | Hill corridor, for sale |
+| 2901 Centre Ave (Middle Hill, LNC) | Same corridor, storefront district |
+| 1800 Cliff St (Crawford-Roberts, RM-M) | CDC property reserve |
+| 849 Vista St (East Allegheny, R1A-VH) | Geography that used to miss ACS; tract is remapped, blanks stay blank if tables are missing |
 
-## What it does NOT do
+## Housing types
 
-- Not a citywide matchmaker or parcel-by-parcel production model.
-- No measured climate emissions — transit distance + density is a proxy.
-- Weights are one CDC-style framework, not a neutral standard.
-- Zoning calls are a Chapter 911 use-table reading for `zoned_as`, not a ROZA or variance outcome. Accessory dwelling is not offered: it is not allowed citywide on these lots.
-- Typical rent nearby is ACS 2024 5-year median gross rent (B25064) for tracts already pulled, benchmarked against Pittsburgh city median ($1,261). Predicted carry is 30% of tract median household income. Not a listing price for a unit that does not exist yet. Other tracts stay blank.
+Two-family house, small apartment, single-family house, affordable housing (a home already allowed in a below-typical-income tract, not a tax-credit award), offices, commercial, industrial. Accessory dwelling is not offered: it is not allowed citywide on these lots.
+
+Walk / Wait / Skip is a Chapter 911 reading of the listed district, not a ROZA certificate.
+
+## What it does not do
+
+- Does not invent ACS, zoning, or a tenant.
+- Does not treat missing as zero.
+- Does not measure air temperature, flood BFE, or carbon of a new building. Trees use the city’s street-tree calculator. Heat is land surface vs the city mean (TPL 2023).
+- Does not scrape Zillow listings. ZHVI is a neighborhood typical finished home, not this vacant lot.
+- Does not use 2012 tax-roll land as the headline. That roll is a footnote. Headline land is 2024-2025 recorded vacant-lot sales, scaled by square feet (almost never this PIN's own sale).
+- Does not pretend a four-house sale on a lot that only allows a house.
 
 ## Data sources
 
-- City-Owned Properties — City of Pittsburgh / WPRDC. https://data.wprdc.org/dataset/city-owned-properties  
+Full list with links is on **How it works** in the app. In short:
+
+- City-Owned Properties, City of Pittsburgh / WPRDC. https://data.wprdc.org/dataset/city-owned-properties  
   Dump: `https://data.wprdc.org/datastore/dump/e1dcee82-9179-4306-8167-5891915b62a7`  
-  **License/terms:** the dataset page’s click-through Data Use Agreement (attribution, no warranty, do not redistribute non-public information).
-- Pittsburgh Zoning Code, Chapter 911 Primary Uses. https://ecode360.com/45476528
-- ACS 2024 5-year (2020–2024) via Census Reporter for tracts `42003050100` and `42003030500` (renter share, rent burden, median household income, median gross rent B25064). Tract `42003563200` is **not in that release**; those ACS cells are blank.
-- Pittsburgh schematic buildings from `Pittsburgh_schematic.slpk` (Esri I3S 1.6, city extent). Downsampled to `web/data/pitt-buildings.bin` (~2,200 boxes). The 116MB SLPK is not in the repo.
+  **Terms:** that page’s Data Use Agreement.
+- Pittsburgh Zoning Code, Chapter 911. https://ecode360.com/45476528
+- ACS 2024 5-year via Census Reporter (renters, rent, income, rent strain, tract home value when Zillow has no name). Blank tracts stay blank.
+- Zillow Research ZHVI (neighborhood, middle third, through August 2026 in this file). Pittsburgh city typical about $239,865. Unmatched names (Homewood West, St. Clair, and others) stay without ZHVI.
+- WPRDC real-estate sales 2024 and 2025 (vacant 0-address Pittsburgh lots). County assessments 2012 FAIRMARKETLAND as footnote.
+- HOME 2-bedroom ceiling $261,595, Allegheny County 2025 addendum.
+- PRT stops, FEMA NFHL (plus 2014 city extract), 25% slope, TPL heat, DPW street trees, HUD LIHTC.
+- Schematic 3D buildings for the city map (downsampled; the original SLPK is not in the repo).
 
-## Libraries / tools
-
-- Python, pandas, Streamlit
-- `scoring.py` for the rule-based engine
-- `fetch_sites.py` to download and filter WPRDC candidates (not used at app runtime)
-- requests only for the optional OpenAI explanation (and for `fetch_sites.py`)
-
-## AI tools used and how
-
-I used **Cursor** to write `fetch_sites.py`, the scoring rules, the Streamlit layout, and the missing-data path. I used an **optional OpenAI call** in the app to phrase a 2–3 sentence explanation of the *already computed* ranking. **I decided** which four parcels and three typologies to include, what the four factors are, that weights re-normalize when a factor is missing, and which limitations to put on screen. I did not ask the model to invent ACS or zoning values; 849 Vista St stays blank where ACS does not resolve.
-
-## Limitations / uncertainty
-
-This prototype compares three typologies on four real publicly owned sites using published zoning categories, lot size, tract ACS (where the tract exists), and distance to a PRT stop. It is not a citywide equity/climate model, not measured emissions, and not a permit. Missing ACS or zoning fields display as insufficient data and are omitted from that typology’s composite so a gap cannot masquerade as a zero.
-
-## Human-in-the-loop / escalation path
-
-A CDC or planner should confirm the parcel with City Planning / OneStopPGH (ROZA), read overlays and lot standards that this scorecard does not encode, and treat ACS tract figures as neighborhood context rather than site-level household data. This dashboard is not a substitute for that review.
+Wood-frame $180/sf is a midpoint assumption ($150-$210 Type V garden range), not a public dataset and not a contractor bid.
 
 ## How to run
-
-**Live (judges):** https://rssrepo.github.io/housing-permits-observatory/  
-Demo `cdc@hillcdc.org` / `pittsburgh`
-
-Studio locally:
 
 ```bash
 python3 serve.py
 ```
 
-Open http://127.0.0.1:8080 · same demo · you land on **Match**.
+Open http://127.0.0.1:8080 · same demo.
 
-Rebuild the citywide lot file from WPRDC (writes `web/data/sites.json`):
+Rebuild lots from WPRDC (then re-run the `join_*.py` scripts if you need ACS, flood, ZHVI, land, heat):
 
 ```bash
 python3 build_citywide.py
 ```
 
-Open http://127.0.0.1:8080 · demo `cdc@hillcdc.org` / `pittsburgh` · you land on **Match**.
-
-Streamlit scorecard (same four parcels):
+Optional leftover Streamlit scorecard on the four sample rows in `sites.csv`:
 
 ```bash
 python3 -m venv .venv
@@ -87,13 +92,27 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Optional: `export OPENAI_API_KEY=...` then use **Explain this ranking**.
+That Streamlit app is not the product judges should open.
 
-Refresh the candidate list (does not overwrite `sites.csv`):
+## Code map
 
-```bash
-python fetch_sites.py
-```
+| Path | Role |
+| --- | --- |
+| `web/` | Static studio (GitHub Pages root) |
+| `web/assets/app.js` | Routes, home, visits, investment, briefing |
+| `web/assets/match.js` | Walk cards, compare, investment stacks |
+| `web/assets/scoring.js` | Mix factors, land/sale/build math |
+| `web/assets/city3d.js` | 3D map |
+| `web/data/sites.json` | Lot file the studio loads |
+| `join_layers.py`, `join_policy.py`, `join_heat.py`, `join_zillow.py`, `join_land_sales.py`, `join_value.py` | Public-file joins onto `sites.json` |
+
+## AI tools used
+
+I used **Cursor** to build the static studio, joins, scoring, and copy. Ranking numbers come from joined public files and staff weights, not from a model inventing ACS or zoning. Vista and other gaps stay blank where the source is blank.
+
+## Human-in-the-loop
+
+Confirm zoning in ROZA / City Planning. Confirm flood on the printed FIRM if NFHL says SFHA. Confirm slope and overlays in the field. Treat Census as the tract, Zillow as the neighborhood typical, and land sales as a citywide vacant $/sf unless this PIN has its own 2024–2025 market sale.
 
 ## Attestation
 
