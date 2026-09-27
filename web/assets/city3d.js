@@ -6,21 +6,9 @@ import {
   isUnknown,
   normalizeWeights,
   scoreSite,
-} from "./scoring.js?v=cdc26";
-import { primaryUse, useAllows } from "./uses.js?v=cdc26";
-
-const LAYERS = [
-  { id: "mix", lab: "Mix score" },
-  { id: "visits", lab: "Your visits" },
-  { id: "path", lab: "Whose land" },
-  { id: "flood", lab: "Flood" },
-  { id: "heat", lab: "Surface heat" },
-  { id: "slope", lab: "Hillside" },
-  { id: "build", lab: "By-right homes" },
-  { id: "use", lab: "Land use" },
-  { id: "shade", lab: "Street trees" },
-  { id: "credit", lab: "LIHTC nearby" },
-];
+} from "./scoring.js?v=cdc30";
+import { primaryUse, useAllows } from "./uses.js?v=cdc30";
+import { LAYERS, LEGEND, bucketOf, layerLabel, passesMapFilters, swatchLabel, activeStack } from "./mapfilter.js?v=cdc39";
 
 const FACTOR_SHORT = {
   feasibility: "Allowed",
@@ -28,64 +16,6 @@ const FACTOR_SHORT = {
   affordability_impact: "Strain",
   displacement_risk: "Overpay",
   climate_proxy: "Bus",
-};
-
-const LEGEND = {
-  mix: [
-    { id: "high", hex: "#4c6fff", lab: "Stronger mix" },
-    { id: "mid", hex: "#8aa6ff", lab: "Middle" },
-    { id: "low", hex: "#c5d0dc", lab: "Weaker mix" },
-    { id: "unk", hex: "#e8e4dc", lab: "Too little data" },
-  ],
-  visits: [
-    { id: "visit", hex: "#4c6fff", lab: "On your visits list" },
-    { id: "other", hex: "#1c2430", lab: "Other city vacant lots" },
-  ],
-  path: [
-    { id: "ura", hex: "#2a9d8f", lab: "URA" },
-    { id: "plb", hex: "#e9c46a", lab: "Land Bank" },
-    { id: "cdc", hex: "#e76f51", lab: "CDC reserve" },
-    { id: "sale", hex: "#4c6fff", lab: "Public sale" },
-    { id: "other", hex: "#8b95a5", lab: "Other public" },
-  ],
-  flood: [
-    { id: "sfha", hex: "#3db5c8", lab: "Special flood hazard (NFHL)" },
-    { id: "ok", hex: "#c5d0dc", lab: "Not SFHA / not flagged" },
-  ],
-  heat: [
-    { id: "hot", hex: "#e76f51", lab: "Hotter than city mean (4–5)" },
-    { id: "mid", hex: "#d69a30", lab: "Near the mean (3)" },
-    { id: "cool", hex: "#4c6fff", lab: "Cooler than city mean (1–2)" },
-    { id: "unk", hex: "#e8e4dc", lab: "No pixel" },
-  ],
-  slope: [
-    { id: "steep", hex: "#d69a30", lab: "Inside 25%+ slope polygons" },
-    { id: "ok", hex: "#c5d0dc", lab: "Not in those polygons" },
-  ],
-  build: [
-    { id: "both", hex: "#4e9470", lab: "Two-family and small apartment" },
-    { id: "duplex", hex: "#4c6fff", lab: "Two-family only" },
-    { id: "mf", hex: "#7b6cc7", lab: "Small apartment only" },
-    { id: "none", hex: "#c5d0dc", lab: "Neither by-right" },
-  ],
-  shade: [
-    { id: "more", hex: "#1d4a32", lab: "More street trees within 400 ft" },
-    { id: "few", hex: "#d8e4d4", lab: "Fewer or none" },
-  ],
-  use: [
-    { id: "affordable", hex: "#4e9470", lab: "Affordable in play" },
-    { id: "single_family", hex: "#4c6fff", lab: "Single-family" },
-    { id: "duplex", hex: "#7b6cc7", lab: "Two-family" },
-    { id: "small_multifamily", hex: "#2a9d8f", lab: "Small apartment" },
-    { id: "office", hex: "#d69a30", lab: "Offices" },
-    { id: "commercial", hex: "#e76f51", lab: "Commercial" },
-    { id: "industrial", hex: "#1c2430", lab: "Industrial" },
-    { id: "none", hex: "#c5d0dc", lab: "None of these / other district" },
-  ],
-  credit: [
-    { id: "near", hex: "#d69a30", lab: "LIHTC within a quarter mile" },
-    { id: "far", hex: "#c5d0dc", lab: "Farther or unmapped" },
-  ],
 };
 
 function pathColor(site) {
@@ -112,55 +42,8 @@ function shadeColor(site) {
   return new THREE.Color(0xd8e4d4).lerp(new THREE.Color(0x1d4a32), t).getHex();
 }
 
-function bucketFor(layer, site, visitIds, mixById, sub) {
-  if (layer === "mix") return (mixById.get(site.site_id) || {}).bucket || "unk";
-  if (layer === "visits") return visitIds.has(site.site_id) ? "visit" : "other";
-  if (layer === "path") {
-    const inv = String(site.inventory_type || "");
-    if (inv === "URA Transfer") return "ura";
-    if (inv === "PLB Transfer") return "plb";
-    if (inv === "CDC Property Reserve") return "cdc";
-    if (inv === "Public Sale") return "sale";
-    return "other";
-  }
-  if (layer === "flood") return String(site.flood_sfha || "").toUpperCase() === "T" ? "sfha" : "ok";
-  if (layer === "heat") {
-    const h = Number(site.heat_severity);
-    if (!Number.isFinite(h)) return "unk";
-    if (h >= 4) return "hot";
-    if (h <= 2) return "cool";
-    return "mid";
-  }
-  if (layer === "slope") return String(site.steep_slope || "").toLowerCase() === "yes" ? "steep" : "ok";
-  if (layer === "build") {
-    const d = String(site.zoning_allows_duplex || "") === "by_right";
-    const m = String(site.zoning_allows_small_multifamily || "") === "by_right";
-    if (d && m) return "both";
-    if (d) return "duplex";
-    if (m) return "mf";
-    return "none";
-  }
-  if (layer === "use") {
-    if (sub === "affordable") return useAllows(site, "affordable") === "by_right" ? "affordable" : "miss";
-    if (sub && sub !== "none") return useAllows(site, sub) === "by_right" ? sub : "miss";
-    if (sub === "none") {
-      const p = primaryUse(site);
-      return p === "none" || p === "unk" ? "none" : "miss";
-    }
-    return primaryUse(site);
-  }
-  if (layer === "shade") return Number(site.trees_400ft) >= 8 ? "more" : "few";
-  if (layer === "credit") {
-    const ft = Number(site.lihtc_ft);
-    return Number.isFinite(ft) && ft <= 1320 ? "near" : "far";
-  }
-  return "other";
-}
-
-function mixHex(n) {
-  if (n == null || n < 0) return 0xe8e4dc;
-  const t = Math.max(0, Math.min(1, n / 100));
-  return new THREE.Color(0xc5d0dc).lerp(new THREE.Color(0x4c6fff), t).getHex();
+function bucketFor(layer, site, visitIds, mixById) {
+  return bucketOf(layer, site, { visitIds, mixById });
 }
 
 function useHex(site) {
@@ -189,15 +72,22 @@ function heatColor(site) {
 }
 
 function colorFor(layer, site, visitIds, mixById, sub) {
-  if (layer === "mix") return mixHex((mixById.get(site.site_id) || {}).n);
+  if (layer === "mix") {
+    const b = (mixById.get(site.site_id) || {}).bucket || "unk";
+    if (b === "high") return 0x4c6fff;
+    if (b === "mid") return 0x8aa6ff;
+    if (b === "low") return 0xc5d0dc;
+    return 0xe8e4dc;
+  }
   if (layer === "visits") return visitIds.has(site.site_id) ? 0x4c6fff : 0x1c2430;
   if (layer === "path") return pathColor(site);
   if (layer === "flood") return String(site.flood_sfha || "").toUpperCase() === "T" ? 0x3db5c8 : 0xc5d0dc;
   if (layer === "heat") return heatColor(site);
   if (layer === "slope") return String(site.steep_slope || "").toLowerCase() === "yes" ? 0xd69a30 : 0xc5d0dc;
-  if (layer === "build") return buildColor(site);
-  if (layer === "use") {
-    if (sub === "affordable") return useAllows(site, "affordable") === "by_right" ? 0x4e9470 : 0xc5d0dc;
+  if (layer === "use" || layer === "build") {
+    if ((sub || "").split(",").includes("affordable") || sub === "affordable") {
+      return useAllows(site, "affordable") === "by_right" ? 0x4e9470 : 0xc5d0dc;
+    }
     return useHex(site);
   }
   if (layer === "shade") return shadeColor(site);
@@ -301,6 +191,8 @@ export async function mountCity(
     onDossier = null,
     onFullCompare = null,
     rail = null,
+    onMapFilter = null,
+    mapFilters = null,
   } = {}
 ) {
   const visits = visitIds instanceof Set ? visitIds : new Set(visitIds);
@@ -320,13 +212,13 @@ export async function mountCity(
   const dock = rail || host;
   const hud = document.createElement("div");
   hud.className = "city-hud";
-  hud.innerHTML = `<div class="city-pick">
-      <button type="button" class="choice chip on" data-mode="compare">Compare two</button>
-      <button type="button" class="choice chip" data-mode="open">Open this lot</button>
-    </div>
-    <div class="city-layers">${LAYERS.map(
+  hud.innerHTML = `<div class="city-layers">${LAYERS.map(
       (l, i) => `<button type="button" class="choice chip${i === 0 ? " on" : ""}" data-layer="${l.id}">${l.lab}</button>`
-    ).join("")}</div><div class="city-legend" id="city-legend"></div>`;
+    ).join("")}</div>
+    <p class="algo-note">Color is one layer. Click a legend class to keep those pegs. By-right lets you pick more than one type: a lot stays if it already allows any of them. Mix score is four classes. Stack other layers too.</p>
+    <div class="city-legend" id="city-legend"></div>
+    <div class="city-stack" id="city-stack"></div>
+    <div class="city-hits" id="city-hits"></div>`;
   dock.appendChild(hud);
   const algo = document.createElement("div");
   algo.className = "city-algo";
@@ -335,40 +227,95 @@ export async function mountCity(
   duel.className = "city-duel";
   duel.hidden = true;
   dock.appendChild(duel);
+  const tools = document.createElement("div");
+  tools.className = "city-tools";
+  tools.innerHTML = `<p class="eyebrow">When you click a peg</p>
+    <p class="algo-note">Not a filter. Compare two lots on the map, or open one lot card.</p>
+    <div class="city-pick">
+      <button type="button" class="choice chip on" data-mode="compare">Compare two</button>
+      <button type="button" class="choice chip" data-mode="open">Open this lot</button>
+    </div>`;
+  dock.appendChild(tools);
   const tip = document.createElement("div");
   tip.className = "city-tip";
   tip.id = "city-tip";
   tip.hidden = true;
   host.appendChild(tip);
   const legendEl = hud.querySelector("#city-legend");
+  const stackEl = hud.querySelector("#city-stack");
+  const hitsEl = hud.querySelector("#city-hits");
   let layer = "mix";
-  let sub = "";
+  let stacked = { ...(mapFilters || {}) };
+  if (stacked.build) {
+    const mapped = [];
+    (stacked.build || []).forEach((id) => {
+      if (id === "both" || id === "duplex") mapped.push("duplex");
+      if (id === "both" || id === "mf") mapped.push("small_multifamily");
+      if (id === "none") mapped.push("none");
+    });
+    stacked.use = [...new Set([...(stacked.use || []), ...mapped])];
+    delete stacked.build;
+  }
   let clickMode = "compare";
   let pickA = null;
   let pickB = null;
   let dragMoved = false;
 
   function paintLegend() {
+    const on = new Set(stacked[layer] || []);
     legendEl.innerHTML = (LEGEND[layer] || [])
       .map(
         (row) =>
-          `<button type="button" class="city-swatch${sub === row.id ? " on" : ""}" data-sub="${row.id}"><i style="background:${row.hex}"></i>${row.lab}</button>`
+          `<button type="button" class="city-swatch${on.has(row.id) ? " on" : ""}" data-sub="${row.id}"><i style="background:${row.hex}"></i>${row.lab}</button>`
       )
       .join("");
     legendEl.querySelectorAll("[data-sub]").forEach((btn) => {
       btn.onclick = (e) => {
         e.stopPropagation();
-        sub = sub === btn.dataset.sub ? "" : btn.dataset.sub;
+        const id = btn.dataset.sub;
+        const cur = new Set(stacked[layer] || []);
+        if (cur.has(id)) cur.delete(id);
+        else cur.add(id);
+        stacked[layer] = [...cur];
+        if (!stacked[layer].length) delete stacked[layer];
         applyView();
         paintLegend();
       };
     });
+    const active = activeStack(stacked);
+    const chips = Object.entries(active).flatMap(([ly, ids]) =>
+      ids.map(
+        (id) =>
+          `<button type="button" class="choice chip on" data-drop="${ly}:${id}">${layerLabel(ly)} · ${swatchLabel(ly, id)}</button>`
+      )
+    );
+    stackEl.innerHTML = chips.length
+      ? `${chips.join("")}<button type="button" class="choice chip" data-clear-stack>Clear stacked filters</button>`
+      : `<p class="muted">No stacked filters. Every vacant lot is on the map.</p>`;
+    stackEl.querySelectorAll("[data-drop]").forEach((btn) => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        const [ly, id] = btn.dataset.drop.split(":");
+        stacked[ly] = (stacked[ly] || []).filter((x) => x !== id);
+        if (!(stacked[ly] || []).length) delete stacked[ly];
+        applyView();
+        paintLegend();
+      };
+    });
+    const wipe = stackEl.querySelector("[data-clear-stack]");
+    if (wipe) {
+      wipe.onclick = (e) => {
+        e.stopPropagation();
+        stacked = {};
+        applyView();
+        paintLegend();
+      };
+    }
   }
 
   let mixTimer = 0;
   function pushMix() {
     layer = "mix";
-    sub = "";
     hud.querySelectorAll("[data-layer]").forEach((b) => b.classList.toggle("on", b.dataset.layer === "mix"));
     const n = normalizeWeights(mixWeights);
     const radar = algo.querySelector(".algo-radar");
@@ -417,7 +364,6 @@ export async function mountCity(
         if (mixTypes.includes(t) && mixTypes.length === 1) return;
         mixTypes = mixTypes.includes(t) ? mixTypes.filter((x) => x !== t) : [...mixTypes, t];
         layer = "mix";
-        sub = "";
         hud.querySelectorAll("[data-layer]").forEach((b) => b.classList.toggle("on", b.dataset.layer === "mix"));
         mixById = scoreLots(plotted, mixWeights, mixTypes);
         paintAlgo();
@@ -538,24 +484,67 @@ export async function mountCity(
   const scales = clusterScales(plotted, visits);
   const hidden = new Uint8Array(plotted.length);
   function applyView() {
+    const ctx = { visitIds: visits, mixById };
+    const active = activeStack(stacked);
+    const matched = [];
     plotted.forEach((site, i) => {
-      const show = !sub || bucketFor(layer, site, visits, mixById, sub) === sub;
+      const show = passesMapFilters(site, stacked, ctx);
       hidden[i] = show ? 0 : 1;
+      if (show) matched.push(site);
       const p = lonLatToLocal(Number(site.longitude), Number(site.latitude), 0.2);
       const h = 1.1 * scales[i];
       dummy.position.set(p.x, p.y + h / 2, p.z);
       dummy.scale.set(show ? scales[i] : 0.001, show ? h : 0.001, show ? scales[i] : 0.001);
       dummy.updateMatrix();
       pegs.setMatrixAt(i, dummy.matrix);
-      pegColor.setHex(colorFor(layer, site, visits, mixById, sub));
+      pegColor.setHex(
+        colorFor(layer, site, visits, mixById, (stacked.use || []).includes("affordable") ? "affordable" : "")
+      );
       pegs.setColorAt(i, pegColor);
     });
     pegs.instanceMatrix.needsUpdate = true;
     if (pegs.instanceColor) pegs.instanceColor.needsUpdate = true;
-    discs.visible = layer === "flood" && floodIdx.length > 0 && (!sub || sub === "sfha");
-    if (focusMesh && focusSite) {
-      focusMesh.visible = !sub || bucketFor(layer, focusSite, visits, mixById, sub) === sub;
+    const floodOn = layer === "flood" || Boolean(active.flood);
+    discs.visible = floodOn && floodIdx.length > 0;
+    if (discs.visible) {
+      floodIdx.forEach((idx, i) => {
+        const site = plotted[idx];
+        const show = !hidden[idx];
+        const p = lonLatToLocal(Number(site.longitude), Number(site.latitude), 0.12);
+        dummy.position.copy(p);
+        dummy.scale.set(show ? 1.6 : 0.001, 1, show ? 1.6 : 0.001);
+        dummy.updateMatrix();
+        discs.setMatrixAt(i, dummy.matrix);
+      });
+      discs.instanceMatrix.needsUpdate = true;
     }
+    if (focusMesh && focusSite) {
+      focusMesh.visible = passesMapFilters(focusSite, stacked, ctx) && !(pickA || pickB);
+    }
+    const n = matched.length;
+    hitsEl.innerHTML = `<p class="eyebrow">${n.toLocaleString()} lot${n === 1 ? "" : "s"} on this cut</p>
+      ${matched
+        .slice(0, 16)
+        .map(
+          (s) =>
+            `<button type="button" class="choice chip" data-hit="${s.site_id}">${s.address || s.site_id}</button>`
+        )
+        .join("")}${n > 16 ? `<p class="muted">First 16 shown. The map holds the rest.</p>` : ""}
+      ${Object.keys(active).length ? `<div class="cta-row"><button type="button" class="pill" data-to-visits>Use this cut on visits</button></div>` : ""}`;
+    hitsEl.querySelectorAll("[data-hit]").forEach((btn) => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        if (onDossier) onDossier(btn.dataset.hit);
+      };
+    });
+    const goVisits = hitsEl.querySelector("[data-to-visits]");
+    if (goVisits) {
+      goVisits.onclick = (e) => {
+        e.stopPropagation();
+        if (onMapFilter) onMapFilter(active, matched.map((s) => s.site_id), true);
+      };
+    }
+    if (onMapFilter) onMapFilter(active, Object.keys(active).length ? matched.map((s) => s.site_id) : null, false);
   }
   scene.add(pegs);
 
@@ -666,17 +655,16 @@ export async function mountCity(
     btn.onclick = (e) => {
       e.stopPropagation();
       layer = btn.dataset.layer;
-      sub = "";
       hud.querySelectorAll("[data-layer]").forEach((b) => b.classList.toggle("on", b === btn));
       applyView();
       paintLegend();
     };
   });
-  hud.querySelectorAll("[data-mode]").forEach((btn) => {
+  tools.querySelectorAll("[data-mode]").forEach((btn) => {
     btn.onclick = (e) => {
       e.stopPropagation();
       clickMode = btn.dataset.mode;
-      hud.querySelectorAll("[data-mode]").forEach((b) => b.classList.toggle("on", b === btn));
+      tools.querySelectorAll("[data-mode]").forEach((b) => b.classList.toggle("on", b === btn));
       if (clickMode !== "compare") {
         pickA = null;
         pickB = null;
@@ -717,7 +705,7 @@ export async function mountCity(
   }
 
   function onDown(e) {
-    if (e.target.closest(".city-hud, .city-algo, .city-duel")) return;
+    if (e.target.closest(".city-hud, .city-algo, .city-duel, .city-tools")) return;
     dragging = true;
     dragMoved = false;
     lastX = e.clientX;
@@ -782,7 +770,7 @@ export async function mountCity(
     dragging = false;
     if (!was) return;
     if (Math.hypot(e.clientX - downX, e.clientY - downY) > 18) return;
-    if (e.target.closest?.(".city-hud, .city-algo, .city-duel")) return;
+    if (e.target.closest?.(".city-hud, .city-algo, .city-duel, .city-tools")) return;
     applyPick(hitLot(e));
   }
   function onWheel(e) {
@@ -791,7 +779,7 @@ export async function mountCity(
     placeCam();
   }
   function onClick(e) {
-    if (e.target.closest(".city-hud, .city-algo, .city-duel")) return;
+    if (e.target.closest(".city-hud, .city-algo, .city-duel, .city-tools")) return;
   }
 
   renderer.domElement.addEventListener("pointerdown", onDown);
@@ -813,9 +801,10 @@ export async function mountCity(
       const pulse = 1.4 + Math.sin((now - t0) / 380) * 0.25;
       floodIdx.forEach((idx, i) => {
         const site = plotted[idx];
+        const show = !hidden[idx];
         const p = lonLatToLocal(Number(site.longitude), Number(site.latitude), 0.12);
         dummy.position.copy(p);
-        dummy.scale.set(pulse, 1, pulse);
+        dummy.scale.set(show ? pulse : 0.001, 1, show ? pulse : 0.001);
         dummy.updateMatrix();
         discs.setMatrixAt(i, dummy.matrix);
       });

@@ -1,4 +1,4 @@
-import { TYPOLOGIES, TYPOLOGY_HINTS, TYPOLOGY_LABELS } from "./scoring.js?v=cdc26";
+import { TYPOLOGIES, TYPOLOGY_HINTS, TYPOLOGY_LABELS } from "./scoring.js?v=cdc28";
 
 export const ASK_N = 14;
 

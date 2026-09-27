@@ -1,4 +1,4 @@
-import { TYPOLOGIES } from "./scoring.js?v=cdc26";
+import { TYPOLOGIES } from "./scoring.js?v=cdc28";
 
 const KEY = "hpo_session_v2";
 

@@ -1,4 +1,4 @@
-import { useAllows } from "./zone.js?v=cdc26";
+import { useAllows } from "./zone.js?v=cdc28";
 
 export const UNKNOWN = "unknown";
 export const TYPOLOGIES = [
@@ -272,7 +272,7 @@ export function ranked(result) {
 }
 
 export const PGH_MEDIAN_GROSS_RENT = 1261;
-export const PGH_MEDIAN_HOME_VALUE = 205800;
+export const PGH_MEDIAN_HOME_VALUE = 239865;
 export const HOME_2BR_USD = 261595;
 export const TYPE_UNITS = {
   duplex: 2,
@@ -287,17 +287,48 @@ export function usd(n) {
 }
 
 export function typicalHomeValueUsd(row) {
-  const raw = readField(row, "tract_median_home_value");
-  if (isUnknown(raw)) return UNKNOWN;
-  const n = Number(String(raw).replace(/,/g, ""));
-  return Number.isFinite(n) && n > 0 ? Math.round(n) : UNKNOWN;
+  for (const key of ["zillow_zhvi_usd", "tract_median_home_value"]) {
+    const raw = readField(row, key);
+    if (isUnknown(raw)) continue;
+    const n = Number(String(raw).replace(/,/g, ""));
+    if (Number.isFinite(n) && n > 0) return Math.round(n);
+  }
+  return UNKNOWN;
 }
 
-export function landFmvUsd(row) {
+export function landRollUsd(row) {
   const raw = readField(row, "assess_land_fmv");
   if (isUnknown(raw)) return UNKNOWN;
   const n = Number(String(raw).replace(/,/g, ""));
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : UNKNOWN;
+}
+
+export function landFmvUsd(row) {
+  for (const key of ["land_sale_usd", "land_comp_usd", "assess_land_fmv"]) {
+    const raw = readField(row, key);
+    if (isUnknown(raw)) continue;
+    const n = Number(String(raw).replace(/,/g, ""));
+    if (Number.isFinite(n) && n > 0) return Math.round(n);
+  }
+  return UNKNOWN;
+}
+
+export function homeValueSource(row) {
+  const z = usd(readField(row, "zillow_zhvi_usd"));
+  if (z != null && z > 0) return "zillow";
+  const a = usd(readField(row, "tract_median_home_value"));
+  if (a != null && a > 0) return "acs";
+  return null;
+}
+
+export function landValueSource(row) {
+  const sale = usd(readField(row, "land_sale_usd"));
+  if (sale != null && sale > 0) return "sale";
+  const comp = usd(readField(row, "land_comp_usd"));
+  if (comp != null && comp > 0) return "comp";
+  const roll = usd(readField(row, "assess_land_fmv"));
+  if (roll != null && roll > 0) return "roll";
+  return null;
 }
 
 export function buildAfford(row, typology) {

@@ -1,4 +1,4 @@
-import { districtBase, useAllows, usePlain } from "./zone.js?v=cdc26";
+import { districtBase, useAllows, usePlain } from "./zone.js?v=cdc28";
 
 export { districtBase, useAllows, usePlain };
 

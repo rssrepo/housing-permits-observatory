@@ -1,11 +1,11 @@
-import { TYPOLOGY_LABELS, displacementGapUsd, isUnknown, predictedRentUsd, PGH_MEDIAN_GROSS_RENT, readField } from "./scoring.js?v=cdc26";
+import { TYPOLOGY_LABELS, displacementGapUsd, isUnknown, predictedRentUsd, PGH_MEDIAN_GROSS_RENT, PGH_MEDIAN_HOME_VALUE, typicalHomeValueUsd, landFmvUsd, homeValueSource, landValueSource, readField } from "./scoring.js?v=cdc48";
 import {
   currentWalks,
   deckPairings,
   mapsUrl,
   walkLine,
   featuredPairing,
-} from "./match.js?v=cdc15";
+} from "./match.js?v=cdc48";
 
 let pendingPlan = null;
 
@@ -16,6 +16,7 @@ export const ASK_PROMPTS = [
   "What is the PIN?",
   "Is this Land Bank land?",
   "What is typical rent nearby?",
+  "What are homes worth nearby?",
   "Compare two types on this lot",
 ];
 
@@ -388,6 +389,33 @@ export function answerQuery(raw, { sites, session, filters }) {
     return card({
       title: "Open this lot on CDC screen.",
       note: "Tags, strengths vs watch-outs, then the five CDC filters. Ranking is in MATCHING.md.",
+    });
+  }
+
+  if (/zillow|zhvi|home worth|home value|cover a build|land worth|land value|sale price|typical home/.test(q)) {
+    const home = top ? typicalHomeValueUsd(top.site) : "unknown";
+    const land = top ? landFmvUsd(top.site) : "unknown";
+    if (top && !isUnknown(home) && home != null) {
+      const src = homeValueSource(top.site);
+      const lab = src === "acs" ? "Census tract typical" : "Zillow neighborhood typical";
+      const items = [
+        esc(`${lab} is about $${home.toLocaleString()}. Pittsburgh overall is about $${PGH_MEDIAN_HOME_VALUE.toLocaleString()}.`),
+      ];
+      if (!isUnknown(land) && land != null) {
+        const ls = landValueSource(top.site);
+        const landLab = ls === "roll" ? "2012 county land roll" : "2024-2025 vacant-lot sales";
+        items.push(esc(`This PIN's land from ${landLab} is about $${land.toLocaleString()}.`));
+      }
+      return card({
+        kicker: "Nearby sale vs this land",
+        title: top.site.address,
+        items,
+        note: "Finished-home typical is not a vacant-lot listing. HOME ceiling is a subsidy cap, not a bid.",
+      });
+    }
+    return card({
+      title: "No Zillow neighborhood typical on this place name.",
+      note: "I hide an expected sale rather than guess from a neighbor. Land still uses 2024-2025 vacant-lot sales when they joined.",
     });
   }
 

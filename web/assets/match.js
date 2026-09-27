@@ -5,10 +5,14 @@ import {
   PGH_MEDIAN_GROSS_RENT,
   PGH_MEDIAN_HOME_VALUE,
   PGH_MEDIAN_INCOME,
+  HOME_2BR_USD,
+  TYPE_UNITS,
   TYPOLOGIES,
   TYPOLOGY_LABELS,
   buildAfford,
   displacementGapUsd,
+  landFmvUsd,
+  landRollUsd,
   isUnknown,
   normalizeWeights,
   predictedRentUsd,
@@ -16,10 +20,12 @@ import {
   scoreSite,
   typicalHomeValueUsd,
   typicalRentUsd,
+  homeValueSource,
+  landValueSource,
   usd,
-} from "./scoring.js?v=cdc27";
-import { useChipsHtml, useCounts } from "./uses.js?v=cdc27";
-import { useAllows } from "./zone.js?v=cdc27";
+} from "./scoring.js?v=cdc48";
+import { useChipsHtml, useCounts, primaryUse } from "./uses.js?v=cdc29";
+import { useAllows } from "./zone.js?v=cdc29";
 
 const ZONING_KEY = {
   duplex: "zoning_allows_duplex",
@@ -127,6 +133,18 @@ function whyAfford(site, factors) {
   return bits.join(" ");
 }
 
+function homePhrase(site) {
+  return homeValueSource(site) === "acs" ? "Census tract typical" : "Zillow neighborhood typical";
+}
+
+function landPhrase(site) {
+  const s = landValueSource(site);
+  if (s === "sale") return "this PIN's 2024-2025 recorded sale";
+  if (s === "comp") return "2024-2025 vacant-lot sales";
+  if (s === "roll") return "2012 county land roll";
+  return "this land";
+}
+
 export function typicalRentLine(site) {
   const rent = typicalRentUsd(site);
   const pred = predictedRentUsd(site);
@@ -144,6 +162,26 @@ export function typicalRentLine(site) {
   }
   if (!isUnknown(pred)) {
     parts.push(`Typical neighborhood income can carry about $${pred.toLocaleString()} a month at 30% of income.`);
+  }
+  return parts.join(" ");
+}
+
+export function typicalHomeLine(site) {
+  const home = typicalHomeValueUsd(site);
+  const land = landFmvUsd(site);
+  const parts = [];
+  if (!isUnknown(home) && home != null) {
+    if (homeValueSource(site) === "zillow") {
+      parts.push(`Zillow's typical finished home in ${site.neighborhood_name || "this neighborhood"} is about $${home.toLocaleString()} (August 2026).`);
+    } else {
+      parts.push(`Census owner-occupied median on this tract is about $${home.toLocaleString()}. Zillow has no match for this place name.`);
+    }
+    const d = home - PGH_MEDIAN_HOME_VALUE;
+    if (d < 0) parts.push(`Pittsburgh overall is about $${PGH_MEDIAN_HOME_VALUE.toLocaleString()}.`);
+    else if (d > 0) parts.push(`That is above Pittsburgh overall ($${PGH_MEDIAN_HOME_VALUE.toLocaleString()}).`);
+  }
+  if (!isUnknown(land) && land != null) {
+    parts.push(`Land from ${landPhrase(site)} scales this parcel to about $${land.toLocaleString()}.`);
   }
   return parts.join(" ");
 }
@@ -196,19 +234,25 @@ export function walkLine(site, typology, verdict) {
   return `Hold ${site.address} for a ${type} until you confirm zoning.`;
 }
 
-export function factsStrip(site) {
+export function factsStrip(site, opts = {}) {
   const sq = Number(readField(site, "parc_sq_ft"));
   const pin = readField(site, "pin");
   const rent = typicalRentUsd(site);
   const home = typicalHomeValueUsd(site);
+  const land = landFmvUsd(site);
   return [
     site.neighborhood_name,
     Number.isFinite(sq) ? `${sq.toLocaleString()} sq ft` : null,
     site.zoned_as || null,
     !isUnknown(pin) ? `PIN ${pin}` : null,
     site.current_status || null,
-    !isUnknown(rent) ? `typical rent $${rent.toLocaleString()}` : null,
-    !isUnknown(home) ? `nearby home $${home.toLocaleString()}` : null,
+    !opts.skipMarket && !isUnknown(rent) ? `typical rent $${rent.toLocaleString()}` : null,
+    !opts.skipMarket && !isUnknown(home)
+      ? `${homeValueSource(site) === "acs" ? "Census home" : "Zillow home"} $${home.toLocaleString()}`
+      : null,
+    !opts.skipMarket && !isUnknown(land) && land != null
+      ? `${landValueSource(site) === "roll" ? "2012 land" : "land"} $${land.toLocaleString()}`
+      : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -303,6 +347,18 @@ export function steerTools(site) {
       have: `${path.k}. ${site.current_status || "Status missing"}. City vacant land, not a private lot.`,
       miss: "Private tax-delinquent land and most of what private capital will build are not in this file.",
     },
+    {
+      k: "Nearby sale vs this land",
+      have: (() => {
+        const home = typicalHomeValueUsd(site);
+        const land = landFmvUsd(site);
+        const bits = [];
+        if (!isUnknown(home) && home != null) bits.push(`${homePhrase(site)} $${home.toLocaleString()} (August 2026).`);
+        if (!isUnknown(land) && land != null) bits.push(`This PIN's land from ${landPhrase(site)} $${land.toLocaleString()}.`);
+        return bits.length ? bits.join(" ") : "No Zillow neighborhood typical or 2024-2025 land stack on this PIN.";
+      })(),
+      miss: "ZHVI is finished homes nearby, not this vacant lot. Land is recorded vacant sales, not a 2025 county reassessment.",
+    },
   ];
 }
 
@@ -330,6 +386,24 @@ export function steerCitywide(sites) {
   let lihtcNear = 0;
   let lihtcFar = 0;
   let lihtcUnk = 0;
+  let flood = 0;
+  let steep = 0;
+  let heatHot = 0;
+  let heatMid = 0;
+  let heatCool = 0;
+  let heatUnk = 0;
+  let treesMore = 0;
+  let treesFew = 0;
+  const primary = {
+    industrial: 0,
+    commercial: 0,
+    office: 0,
+    small_multifamily: 0,
+    duplex: 0,
+    single_family: 0,
+    none: 0,
+    unk: 0,
+  };
   for (const s of sites || []) {
     const inv = String(s.inventory_type || "").trim();
     if (inv in land) land[inv] += 1;
@@ -347,8 +421,42 @@ export function steerCitywide(sites) {
     if (!Number.isFinite(ft)) lihtcUnk += 1;
     else if (ft <= 1320) lihtcNear += 1;
     else lihtcFar += 1;
+    if (String(s.flood_sfha || "").toUpperCase() === "T") flood += 1;
+    if (String(s.steep_slope || "").toLowerCase() === "yes") steep += 1;
+    const h = Number(s.heat_severity);
+    if (!Number.isFinite(h)) heatUnk += 1;
+    else if (h >= 4) heatHot += 1;
+    else if (h <= 2) heatCool += 1;
+    else heatMid += 1;
+    const trees = Number(s.trees_400ft);
+    if (Number.isFinite(trees) && trees >= 8) treesMore += 1;
+    else treesFew += 1;
+    const p = primaryUse(s);
+    if (p in primary) primary[p] += 1;
+    else primary.unk += 1;
   }
-  return { n: (sites || []).length, land, duplex, mf, both, neither, zUnk, lihtcNear, lihtcFar, lihtcUnk, uses: useCounts(sites) };
+  return {
+    n: (sites || []).length,
+    land,
+    duplex,
+    mf,
+    both,
+    neither,
+    zUnk,
+    lihtcNear,
+    lihtcFar,
+    lihtcUnk,
+    flood,
+    steep,
+    heatHot,
+    heatMid,
+    heatCool,
+    heatUnk,
+    treesMore,
+    treesFew,
+    primary,
+    uses: useCounts(sites),
+  };
 }
 
 export function assemblyAround(site, sites, maxFt = 220) {
@@ -367,7 +475,15 @@ export function cdcScreen(site, sites) {
     {
       step: "1. Public land",
       title: site.current_status || "City vacant lot",
-      body: `PIN ${isUnknown(readField(site, "pin")) ? "not listed" : readField(site, "pin")}. ${path.k}. WPRDC city-owned vacant land, not Parcels N'At private delinquency.`,
+      body: (() => {
+        const pin = isUnknown(readField(site, "pin")) ? "not listed" : readField(site, "pin");
+        const home = typicalHomeValueUsd(site);
+        const land = landFmvUsd(site);
+        const bits = [`PIN ${pin}. ${path.k}. WPRDC city-owned vacant land, not Parcels N'At private delinquency.`];
+        if (!isUnknown(home) && home != null) bits.push(`${homePhrase(site)} in ${place} $${home.toLocaleString()}.`);
+        if (!isUnknown(land) && land != null) bits.push(`Land from ${landPhrase(site)} $${land.toLocaleString()}.`);
+        return bits.join(" ");
+      })(),
     },
     {
       step: "2. Pathway",
@@ -437,10 +553,10 @@ export function cardPoints(site, typology, verdict, weights) {
   const rows = [];
   if (a.housing) {
     const bits = [];
-    if (a.home != null) bits.push(`nearby finished home $${a.home.toLocaleString()}`);
-    if (a.land != null) bits.push(`this land $${a.land.toLocaleString()} (2012 FMV)`);
+    if (a.home != null) bits.push(`${homePhrase(site)} $${a.home.toLocaleString()}`);
+    if (a.land != null) bits.push(`this land $${a.land.toLocaleString()} (${landPhrase(site)})`);
     if (a.cost != null) bits.push(`${a.units} × HOME 2BR ceiling $${a.cost.toLocaleString()}`);
-    if (a.sale != null) bits.push(`if sold at tract typical $${a.sale.toLocaleString()}`);
+    if (a.sale != null) bits.push(`if sold at the ${homePhrase(site)} $${a.sale.toLocaleString()}`);
     if (a.spread != null) {
       bits.push(
         a.spread >= 0
@@ -452,10 +568,10 @@ export function cardPoints(site, typology, verdict, weights) {
       k: "Build",
       v: bits.length
         ? `${bits.join(". ")}. Not a bid or an appraisal.`
-        : "No land value or tract home value to stack a build against.",
+        : "No land value or Zillow home value to stack a build against.",
     });
   } else if (a.land != null) {
-    rows.push({ k: "Land", v: `County 2012 fair-market land $${a.land.toLocaleString()}.` });
+    rows.push({ k: "Land", v: `Recent vacant-lot sales scale this parcel to $${a.land.toLocaleString()}.` });
   }
   rows.push({ k: "Do", v: walkLine(site, typology, verdict) });
 
@@ -534,40 +650,203 @@ function money(n) {
   return v == null ? null : `$${v.toLocaleString()}`;
 }
 
+function verdictTone(verdict) {
+  if (verdict === "go") return "go";
+  if (verdict === "caution") return "warn";
+  if (verdict === "no-go") return "bad";
+  return "info";
+}
+
+function investTags(site, pairing) {
+  const tags = [];
+  if (pairing) {
+    tags.push({ label: VERDICT_LABEL[pairing.verdict] || pairing.verdict, tone: verdictTone(pairing.verdict) });
+    tags.push({ label: TYPOLOGY_LABELS[pairing.typology] || pairing.typology, tone: "info" });
+  }
+  const sq = Number(readField(site, "parc_sq_ft"));
+  if (Number.isFinite(sq) && sq > 0) tags.push({ label: `${sq.toLocaleString()} sq ft`, tone: "info" });
+  if (site.zoned_as) tags.push({ label: site.zoned_as, tone: "info" });
+  const pin = readField(site, "pin");
+  if (!isUnknown(pin)) tags.push({ label: `PIN ${pin}`, tone: "info" });
+  if (site.current_status) tags.push({ label: site.current_status, tone: "go" });
+  return tags;
+}
+
+export function tractInvestHead(site) {
+  const home = typicalHomeValueUsd(site);
+  const rent = typicalRentUsd(site);
+  const homeM = money(home);
+  const rentM = money(rent);
+  const cap = money(HOME_2BR_USD);
+  const tags = [
+    { label: site.neighborhood_name || "Pittsburgh", tone: "info" },
+    { label: homeValueSource(site) === "acs" ? "Census tract home" : "Zillow typical home", tone: "info" },
+  ];
+  let vsP = "";
+  if (!isUnknown(home) && home != null) {
+    const d = home - PGH_MEDIAN_HOME_VALUE;
+    vsP =
+      d < 0
+        ? `That is ${money(Math.abs(d))} less than a typical Pittsburgh home (${money(PGH_MEDIAN_HOME_VALUE)}).`
+        : d > 0
+          ? `That is ${money(d)} more than a typical Pittsburgh home (${money(PGH_MEDIAN_HOME_VALUE)}).`
+          : `That matches a typical Pittsburgh home (${money(PGH_MEDIAN_HOME_VALUE)}).`;
+  }
+  const title = homeM ? `Finished homes around here are worth about ${homeM}` : "No nearby home value is on file yet";
+  const rentP = rentM
+    ? `Rent nearby is about ${rentM} a month.`
+    : "Rent nearby is blank on this file.";
+  const capP = cap
+    ? `HUD's HOME program will not count more than ${cap} toward one 2-bedroom. That is a subsidy ceiling, not a contractor's bid.`
+    : "";
+  return `<div class="invest-tract-head">
+    ${tagHtml(tags)}
+    <h3 class="serif">${title}</h3>
+    ${vsP ? `<p>${vsP}</p>` : ""}
+    <p>${rentP}</p>
+    <p>${homeValueSource(site) === "acs"
+      ? "This is the Census owner-occupied median on this tract. Not a vacant-lot listing."
+      : "This is Zillow's typical finished home for this neighborhood, through August 2026. Not a vacant-lot listing."} Every lot below uses this sale price. Land is from ${landPhrase(site)}, scaled to the parcel.</p>
+    ${capP ? `<p class="muted">${capP}</p>` : ""}
+  </div>`;
+}
+
+function gapCopy(spread) {
+  if (spread == null) return { n: "—", p: "Sale or land is missing, so this stack stays blank." };
+  if (spread >= 0) {
+    return {
+      n: money(spread),
+      p: "Typical sale would more than cover this land plus the HUD ceiling.",
+    };
+  }
+  return {
+    n: money(Math.abs(spread)),
+    p: "Typical sale would fall short of this land plus the HUD ceiling.",
+  };
+}
+
+export function investHtml(site) {
+  const land = money(landFmvUsd(site));
+  const roll = money(landRollUsd(site));
+  const saleN = Number(String(site.land_sale_usd || "").replace(/,/g, ""));
+  const pinSale = Number.isFinite(saleN) && saleN > 0 ? money(saleN) : null;
+  const psf = Number(site.land_comp_psf);
+  const psfLab = Number.isFinite(psf) ? `$${psf.toFixed(2)}` : null;
+  let landP = "No 2024-2025 vacant-lot sale rate is on this parcel.";
+  if (pinSale && site.land_sale_year) {
+    landP = `This PIN recorded a vacant-lot sale in ${site.land_sale_year} for ${pinSale}.`;
+  } else if (land && psfLab) {
+    landP = `Vacant lots that sat on the Pittsburgh market in 2024 and 2025 sold around ${psfLab} a square foot. Scaled to this lot, that is ${land}.`;
+  } else if (land) {
+    landP = `Land from recent vacant-lot sales is ${land}.`;
+  }
+  if (roll && roll !== land) {
+    landP += ` The county tax roll still uses 2012 (${roll}).`;
+  }
+  landP += " Not a listing price, and not what you will pay a builder.";
+  const rows = [
+    { t: "single_family", lab: "One house" },
+    { t: "duplex", lab: "Two houses" },
+    { t: "small_multifamily", lab: "Four houses" },
+  ];
+  const cells = rows
+    .map(({ t, lab }) => {
+      const a = buildAfford(site, t);
+      const tone = a.spread == null ? "" : a.spread >= 0 ? "tone-go" : "tone-bad";
+      const g = gapCopy(a.spread);
+      const sale = money(a.sale);
+      const cost = money(a.cost);
+      return `<div class="invest-scen ${tone}">
+        <p class="eyebrow">${lab}</p>
+        <p class="serif">${g.n}${a.spread == null ? "" : a.spread >= 0 ? " left" : " short"}</p>
+        <p>${g.p}</p>
+        <p class="muted">Sell for about ${sale || "—"}. HUD ceiling ${cost || "—"}.</p>
+      </div>`;
+    })
+    .join("");
+  return `<div class="invest-pin">
+    <p class="serif afford-n">${land ? `Land from 2024-2025 sales ${land}` : "Land value is not on this parcel"}</p>
+    <p>${landP}</p>
+    <div class="invest-scens">${cells}</div>
+  </div>`;
+}
+
+export function investLotHtml(pairing) {
+  const site = pairing.site;
+  return `<article class="invest-lot">
+    ${tagHtml(investTags(site, pairing))}
+    <h3 class="serif">${site.address}</h3>
+    ${investHtml(site)}
+    <div class="cta-row">
+      <a class="pill ghost" href="#/match/${site.site_id}/${pairing.typology}">Open visit</a>
+      <a class="pill ghost" href="#/scorecard/${site.site_id}">CDC screen</a>
+    </div>
+  </article>`;
+}
+
+export function groupVisitsByTract(pairings) {
+  const order = [];
+  const map = new Map();
+  for (const p of pairings) {
+    const k = String(p.site.neighborhood_name || p.site.census_tract || "none");
+    if (!map.has(k)) {
+      const g = { key: k, site: p.site, lots: [] };
+      map.set(k, g);
+      order.push(g);
+    }
+    map.get(k).lots.push(p);
+  }
+  return order;
+}
+
 export function affordHtml(site, typology) {
+  try {
+    return affordHtmlInner(site, typology);
+  } catch (err) {
+    return `<div class="afford-band tone-warn"><p class="eyebrow">Can you cover a build?</p><p class="muted">This lot's price stack could not be drawn. Land and sale numbers are still on the lot file.</p></div>`;
+  }
+}
+
+function affordHtmlInner(site, typology) {
   const a = buildAfford(site, typology);
   const land = money(a.land);
   const home = money(a.home);
-  const vs = a.home != null ? a.home - PGH_MEDIAN_HOME_VALUE : null;
-  const vsLab =
-    vs == null
-      ? ""
-      : vs < 0
-        ? `${money(Math.abs(vs))} below Pittsburgh typical (${money(PGH_MEDIAN_HOME_VALUE)})`
-        : vs > 0
-          ? `${money(vs)} above Pittsburgh typical (${money(PGH_MEDIAN_HOME_VALUE)})`
-          : `In line with Pittsburgh typical (${money(PGH_MEDIAN_HOME_VALUE)})`;
   if (!a.housing) {
     return `<div class="afford-band">
-      <p class="eyebrow">This land on the books</p>
-      <p class="serif afford-n">${land || "No assessment"}</p>
-      <p class="muted">County 2012 fair-market land value. Workplace types are not given a home-sale number.</p>
+      <p class="eyebrow">This land from ${landPhrase(site)}</p>
+      <p class="serif afford-n">${land || "Land not on this PIN"}</p>
+      <p class="muted">From ${landPhrase(site)}, scaled to this lot. Workplace types are not given a home-sale number.</p>
     </div>`;
   }
   const sale = money(a.sale);
   const cost = money(a.cost);
-  const tone = a.spread == null ? "warn" : a.spread >= 0 ? "go" : "bad";
-  const spreadClean =
-    a.spread == null
-      ? "Need both a tract home value and land value to stack typical sales against land plus the HOME ceiling."
-      : a.spread >= 0
-        ? `If each unit sold at the tract typical, that is ${money(a.spread)} above land plus the HOME 2-bedroom ceiling. Not a bid and not an appraisal.`
-        : `If each unit sold at the tract typical, you are about ${money(Math.abs(a.spread))} short of land plus the HOME 2-bedroom ceiling. Not a bid and not an appraisal.`;
-  return `<div class="afford-band tone-${tone}">
+  if (home) {
+    const vs = a.home - PGH_MEDIAN_HOME_VALUE;
+    const vsLab =
+      vs < 0
+        ? `${money(Math.abs(vs))} below Pittsburgh typical (${money(PGH_MEDIAN_HOME_VALUE)})`
+        : vs > 0
+          ? `${money(vs)} above Pittsburgh typical (${money(PGH_MEDIAN_HOME_VALUE)})`
+          : `In line with Pittsburgh typical (${money(PGH_MEDIAN_HOME_VALUE)})`;
+    const hp = homePhrase(site);
+    const spreadLine =
+      a.spread == null
+        ? ""
+        : a.spread >= 0
+          ? `If each unit sold at the ${hp}, that is ${money(a.spread)} above land plus the HOME 2-bedroom ceiling.`
+          : `If each unit sold at the ${hp}, you are about ${money(Math.abs(a.spread))} short of land plus the HOME 2-bedroom ceiling.`;
+    return `<div class="afford-band tone-${a.spread == null ? "warn" : a.spread >= 0 ? "go" : "bad"}">
+      <p class="eyebrow">Can you cover a build?</p>
+      <p class="serif afford-n">${hp} ${home}</p>
+      <p>${vsLab}. Land ${land || "not on file"} (${landPhrase(site)}). ${a.units} unit${a.units === 1 ? "" : "s"} × HOME 2-bedroom ceiling ${cost || "—"}${sale ? ` · if sold at that typical ${sale}` : ""}.</p>
+      <p class="muted">${spreadLine} HOME ceiling is a subsidy cap, not a contractor bid.</p>
+    </div>`;
+  }
+  return `<div class="afford-band">
     <p class="eyebrow">Can you cover a build?</p>
-    <p class="serif afford-n">${home ? `Nearby finished home ${home}` : "No tract home value"}</p>
-    <p>${home && vsLab ? vsLab + "." : ""} Land on this PIN ${land || "not in the assessment file"}. ${a.units} unit${a.units === 1 ? "" : "s"} × HOME 2-bedroom ceiling ${cost || "—"}${sale ? ` · if sold at tract typical ${sale}` : ""}.</p>
-    <p class="muted">${spreadClean} County land is 2012 base-year FMV. HOME ceiling is Allegheny County's 2025 HUD 2-bedroom elevator limit ($261,595), a subsidy cap not a contractor price. ACS home value is nearby owner-occupied stock, not this vacant lot.</p>
+    <p class="serif afford-n">${land ? `Land on this PIN ${land}` : "Land value not on this PIN"}</p>
+    <p>${a.units} unit${a.units === 1 ? "" : "s"} × HOME 2-bedroom ceiling ${cost || "—"}.</p>
+    <p class="muted">No Zillow neighborhood typical or Census home value on this place name, so an expected sale is left blank.<br>Not filled from a neighbor. HOME ceiling is a subsidy cap, not a bid.</p>
   </div>`;
 }
 
@@ -600,15 +879,15 @@ export function tradeoffSheet(site, typology, session = {}) {
   if (aff.housing && aff.spread != null) {
     if (aff.spread >= 0) {
       gain.push(
-        `If ${aff.units} unit${aff.units === 1 ? "" : "s"} sold at the tract typical home value, that is about $${aff.spread.toLocaleString()} above this land plus the HOME 2-bedroom ceiling. A stack of public numbers, not a bid.`
+        `If ${aff.units} unit${aff.units === 1 ? "" : "s"} sold at the ${homePhrase(site)}, that is about $${aff.spread.toLocaleString()} above this land plus the HOME 2-bedroom ceiling. A stack of public numbers, not a bid.`
       );
     } else {
       cost.push(
-        `If ${aff.units} unit${aff.units === 1 ? "" : "s"} sold at the tract typical, you are about $${Math.abs(aff.spread).toLocaleString()} short of this land plus the HOME 2-bedroom ceiling. Subsidy or a cheaper build has to close that.`
+        `If ${aff.units} unit${aff.units === 1 ? "" : "s"} sold at the ${homePhrase(site)}, you are about $${Math.abs(aff.spread).toLocaleString()} short of this land plus the HOME 2-bedroom ceiling. Subsidy or a cheaper build has to close that.`
       );
     }
   } else if (aff.housing && aff.home == null) {
-    miss.push("No ACS median home value on this tract, so an expected sale is not claimed.");
+    miss.push("No Zillow neighborhood typical or Census home value on this place name, so an expected sale is not claimed.");
   }
 
   if (z === "by_right") {
@@ -769,6 +1048,13 @@ export function scorecardTags(site, sites) {
       tone: lihtc <= 1320 ? "warn" : "info",
     });
   }
+  const zhvi = typicalHomeValueUsd(site);
+  const src = homeValueSource(site);
+  if (src === "zillow") tags.push({ label: `Zillow home $${zhvi.toLocaleString()}`, tone: "info" });
+  else if (src === "acs") tags.push({ label: `Census home $${zhvi.toLocaleString()}`, tone: "info" });
+  else tags.push({ label: "No Zillow typical", tone: "warn" });
+  const land = landFmvUsd(site);
+  if (!isUnknown(land) && land != null) tags.push({ label: `Land $${land.toLocaleString()}`, tone: "info" });
   const share = numField(site, "tract_renter_share");
   if (share == null) tags.push({ label: "No tract ACS", tone: "warn" });
   return tags;
@@ -781,24 +1067,24 @@ function marketRows(site) {
     const vs = aff.home - PGH_MEDIAN_HOME_VALUE;
     rows.push({
       tone: vs >= 0 ? "info" : "warn",
-      k: "Nearby home value",
+      k: homePhrase(site),
       v: `$${aff.home.toLocaleString()}`,
-      more: `${site.home_value_note || "ACS owner-occupied median in this tract."} Pittsburgh typical is $${PGH_MEDIAN_HOME_VALUE.toLocaleString()}.`,
+      more: `${site.zillow_note || site.home_value_note || (homeValueSource(site) === "zillow" ? "Zillow ZHVI for this neighborhood." : "Census owner-occupied median on this tract.")} Pittsburgh typical is $${PGH_MEDIAN_HOME_VALUE.toLocaleString()}.`,
     });
   } else {
     rows.push({
       tone: "warn",
-      k: "Nearby home value",
-      v: "Not on this tract",
-      more: "ACS B25077 was blank or not fetched. Left empty, not filled from a neighbor.",
+      k: "Zillow or Census home",
+      v: "Not on this place name",
+      more: "No neighborhood ZHVI and no tract owner-occupied median. Not filled from a neighbor.",
     });
   }
   if (aff.land != null) {
     rows.push({
       tone: "info",
-      k: "This land (2012 FMV)",
+      k: `This land (${landValueSource(site) === "roll" ? "2012 roll" : "2024-2025 sales"})`,
       v: `$${aff.land.toLocaleString()}`,
-      more: site.assess_note || "Allegheny County FAIRMARKETLAND via WPRDC. 2012 base year, not a 2026 ask.",
+      more: site.land_comp_note || site.land_sale_note || site.assess_note || `${landPhrase(site)}, scaled to this lot.`,
     });
   }
   const sq = numField(site, "parc_sq_ft");
@@ -938,9 +1224,10 @@ export function scorecardHtml(site, sites, session) {
   const call = best ? VERDICT_LABEL[best.verdict] : "Hold";
   const type = best ? TYPOLOGY_LABELS[best.typology] : "";
   const n = best && !isUnknown(best.score) ? Math.round(Number(best.score)) : "—";
+  const stackType = best && TYPE_UNITS[best.typology] ? best.typology : "duplex";
   return `
     <div class="dossier-head card">
-      ${affordHtml(site, best?.typology)}
+      ${affordHtml(site, stackType)}
       ${tagHtml(tags)}
       <p class="eyebrow">${site.neighborhood_name || "Pittsburgh"} · PIN ${isUnknown(readField(site, "pin")) ? "none" : readField(site, "pin")}</p>
       <h2 class="serif pairing-title">${site.address}</h2>
@@ -987,10 +1274,10 @@ export function parsePairingKey(key) {
   return { siteId, typology };
 }
 
-export function buildPairing(site, typology, session) {
+export function buildPairing(site, typology, session, result = null) {
   const t = TYPOLOGIES.includes(typology) ? typology : "duplex";
-  const result = scoreSite(site, session.weights);
-  const block = result.typologies[t];
+  const scored = result || scoreSite(site, session.weights);
+  const block = scored.typologies[t];
   const verdict = verdictFor(site, t);
   const score = block.composite.score;
   const why = [
@@ -1015,6 +1302,21 @@ export function buildPairing(site, typology, session) {
     brief,
     points,
     tradeoffs,
+    factors: block.factors,
+    composite: block.composite,
+  };
+}
+
+export function rankPairing(site, typology, session, result = null) {
+  const t = TYPOLOGIES.includes(typology) ? typology : "duplex";
+  const scored = result || scoreSite(site, session.weights);
+  const block = scored.typologies[t];
+  return {
+    key: pairingKey(site.site_id, t),
+    site,
+    typology: t,
+    verdict: verdictFor(site, t),
+    score: block.composite.score,
     factors: block.factors,
     composite: block.composite,
   };
@@ -1131,6 +1433,10 @@ export function filterSites(sites, f = {}) {
       if (!isUnknown(gap) && gap > 0) return false;
       if (Number.isFinite(burden) && burden >= 40) return false;
     }
+    if (Array.isArray(f.mapMatchIds) && f.mapMatchIds.length) {
+      if (!f._mapMatchSet) f._mapMatchSet = new Set(f.mapMatchIds);
+      if (!f._mapMatchSet.has(s.site_id)) return false;
+    }
     return true;
   });
 }
@@ -1146,8 +1452,9 @@ export function deckPairings(sites, session, f = {}) {
   const types = chosenTypes(f);
   const rows = [];
   for (const site of filtered) {
+    const result = scoreSite(site, session.weights);
     for (const typology of types) {
-      rows.push(buildPairing(site, typology, session));
+      rows.push(rankPairing(site, typology, session, result));
     }
   }
   return { filtered, pairings: sortPairings(rows) };
@@ -1173,7 +1480,48 @@ export function featuredPairing(pairings, lastKey) {
   return pairings.find((p) => p.verdict === "go") || pairings[0];
 }
 
-export function currentWalks(sites, session, rankedWalk) {
+export function walkChipState(session = {}) {
+  const type = session.walkType;
+  return {
+    type: type && TYPOLOGIES.includes(type) ? type : "",
+    land: session.walkLand || "",
+    skipFlood: Boolean(session.walkSkipFlood),
+    skipSteep: Boolean(session.walkSkipSteep),
+    skipHot: Boolean(session.walkSkipHot),
+    lihtcNear: Boolean(session.walkLihtcNear),
+    trees: Boolean(session.walkTrees),
+  };
+}
+
+export function walkChipsOn(session) {
+  const w = walkChipState(session);
+  return Boolean(w.type || w.land || w.skipFlood || w.skipSteep || w.skipHot || w.lihtcNear || w.trees);
+}
+
+export function pairingPassesWalk(pairing, session) {
+  const w = walkChipState(session);
+  const site = pairing?.site;
+  if (!site) return false;
+  if (w.type && pairing.typology !== w.type) return false;
+  if (w.land && String(site.inventory_type || "") !== w.land) return false;
+  if (w.skipFlood && String(site.flood_sfha || "").toUpperCase() === "T") return false;
+  if (w.skipSteep && String(site.steep_slope || "").toLowerCase() === "yes") return false;
+  if (w.skipHot) {
+    const h = Number(site.heat_severity);
+    if (Number.isFinite(h) && h >= 4) return false;
+  }
+  if (w.lihtcNear) {
+    const ft = Number(site.lihtc_ft);
+    if (!Number.isFinite(ft) || ft > 1320) return false;
+  }
+  if (w.trees) {
+    const t = Number(site.trees_400ft);
+    if (!Number.isFinite(t) || t < 8) return false;
+  }
+  return true;
+}
+
+export function currentWalks(sites, session, rankedWalk, limit = 24) {
   const extras = (session.extraWalks || [])
     .map((x) => {
       const site = (sites || []).find((s) => s.site_id === x.siteId);
@@ -1182,16 +1530,18 @@ export function currentWalks(sites, session, rankedWalk) {
         x.typology && TYPOLOGIES.includes(x.typology)
           ? x.typology
           : TYPOLOGIES.find((t) => verdictFor(site, t) === "go") || "duplex";
-      return buildPairing(site, typology, session);
+      return rankPairing(site, typology, session);
     })
     .filter(Boolean);
   const rest = (rankedWalk || []).filter((p) => !extras.some((e) => e.site.site_id === p.site.site_id));
   const seen = new Set();
-  return [...extras, ...rest].filter((p) => {
+  const unique = [...extras, ...rest].filter((p) => {
     if (seen.has(p.site.site_id)) return false;
     seen.add(p.site.site_id);
-    return true;
+    return pairingPassesWalk(p, session);
   });
+  const keep = Math.max(limit, extras.length);
+  return unique.slice(0, keep);
 }
 
 function callRank(verdict) {
@@ -1287,6 +1637,21 @@ export function compareInsight(leftSite, rightSite, session, preferredType, allS
   const pathL = pathwayFor(loser.site);
   if (pathW.k !== pathL.k) {
     reasons.push(`Acquisition path: ${pathW.k} on ${winner.site.address} vs ${pathL.k} on the other lot.`);
+  }
+
+  const hW = typicalHomeValueUsd(winner.site);
+  const hL = typicalHomeValueUsd(loser.site);
+  if (!isUnknown(hW) && hW != null && !isUnknown(hL) && hL != null && Math.abs(hW - hL) >= 15000) {
+    reasons.push(
+      `Typical finished home is $${hW.toLocaleString()} around ${winner.site.neighborhood_name || "the first lot"} vs $${hL.toLocaleString()} around ${loser.site.neighborhood_name || "the other lot"}.`
+    );
+  }
+  const landW = landFmvUsd(winner.site);
+  const landL = landFmvUsd(loser.site);
+  if (!isUnknown(landW) && landW != null && !isUnknown(landL) && landL != null && Math.abs(landW - landL) >= 4000) {
+    reasons.push(
+      `Land from ${landPhrase(winner.site)} is $${landW.toLocaleString()} vs $${landL.toLocaleString()} on the other PIN.`
+    );
   }
 
   const nW = assemblyAround(winner.site, allSites).length;
@@ -1496,6 +1861,8 @@ export function splitLegendHtml(pairing, session = {}) {
     "Visit / Hold / Skip is zoning on this lot.",
     "Lot size, bus distance, flood, hillside, trees, and surface heat are parcel or overlay joins.",
     "Rent, income, and overpay are ACS for the tract, not a listing for this building.",
+    "Nearby finished-home typical is Zillow ZHVI for the neighborhood (August 2026).",
+    "This PIN's land is 2024-2025 vacant-lot sales, scaled to lot size. The county tax roll is still 2012.",
   ];
   const values = [
     top
