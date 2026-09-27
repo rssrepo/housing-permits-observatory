@@ -8,10 +8,34 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,500;1,500&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./assets/styles.css?v=cmp1" />
+    <link rel="stylesheet" href="./assets/styles.css?v=cdc13" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.1/build/three.module.js"
+        }
+      }
+    </script>
   </head>
   <body>
-    <div id="app"></div>
-    <script type="module" src="./assets/app.js?v=cmp1"></script>
+    <div id="app">
+      <header class="nav">
+        <a class="brand" href="#/"><span class="mark"></span> Parcel Fit</a>
+        <nav class="nav-links"><a href="#/login">Sign in</a></nav>
+        <a class="pill" href="#/login">Open the studio</a>
+      </header>
+      <main class="wrap">
+        <section class="hero">
+          <span class="eyebrow">Pittsburgh CDC lot targeting</span>
+          <h1>Which vacant city lots are worth a visit this week, and what can you build there by-right?</h1>
+          <p class="lede">CDCs do not grab land at random. They screen public ownership, title pathway, clusters for assembly, by-right density, and the neighborhood plan.</p>
+          <div class="cta-row">
+            <a class="pill" href="#/demo">Start as Hill District demo</a>
+            <a class="pill ghost" href="#/login">Create a workspace</a>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="./assets/app.js?v=cdc13"></script>
   </body>
 </html>

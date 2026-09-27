@@ -6,7 +6,9 @@
 
 ## What this does
 
-A CDC-scale Streamlit tool that scores three housing types (ADU, duplex, small multifamily) on four inspectable factors for **four real City of Pittsburgh parcels**. Weights are user-controlled. Missing inputs show as **Insufficient data** and are dropped from the composite, not scored as zero.
+A CDC-scale studio for **vacant city-owned lot targeting** in Pittsburgh: public ownership, Land Bank / URA / sale pathway, nearby vacant clusters, by-right housing type, then five walks. Weights are user-controlled. Missing inputs are dropped from the composite, not scored as zero.
+
+The ranking specification is [`MATCHING.md`](MATCHING.md). CDC screens and risk notes: [`FRAMEWORK.md`](FRAMEWORK.md).
 
 ## Sites
 
@@ -24,7 +26,7 @@ A CDC-scale Streamlit tool that scores three housing types (ADU, duplex, small m
 - Not a citywide matchmaker or parcel-by-parcel production model.
 - No measured climate emissions — transit distance + density is a proxy.
 - Weights are one CDC-style framework, not a neutral standard.
-- Zoning calls are a Chapter 911 use-table reading for `zoned_as`, not a ROZA or variance outcome. Pittsburgh still had **no citywide ADU use** as of this build (CB 2025-1545 pending).
+- Zoning calls are a Chapter 911 use-table reading for `zoned_as`, not a ROZA or variance outcome. Accessory dwelling is not offered: it is not allowed citywide on these lots.
 - Typical rent nearby is ACS 2024 5-year median gross rent (B25064) for tracts already pulled, benchmarked against Pittsburgh city median ($1,261). Predicted carry is 30% of tract median household income. Not a listing price for a unit that does not exist yet. Other tracts stay blank.
 
 ## Data sources
@@ -34,7 +36,7 @@ A CDC-scale Streamlit tool that scores three housing types (ADU, duplex, small m
   **License/terms:** the dataset page’s click-through Data Use Agreement (attribution, no warranty, do not redistribute non-public information).
 - Pittsburgh Zoning Code, Chapter 911 Primary Uses. https://ecode360.com/45476528
 - ACS 2024 5-year (2020–2024) via Census Reporter for tracts `42003050100` and `42003030500` (renter share, rent burden, median household income, median gross rent B25064). Tract `42003563200` is **not in that release**; those ACS cells are blank.
-- Pittsburgh Regional Transit Stops (WPRDC GeoJSON) — nearest-stop distance in feet, computed once and stored in `sites.csv`.
+- Pittsburgh schematic buildings from `Pittsburgh_schematic.slpk` (Esri I3S 1.6, city extent). Downsampled to `web/data/pitt-buildings.bin` (~2,200 boxes). The 116MB SLPK is not in the repo.
 
 ## Libraries / tools
 

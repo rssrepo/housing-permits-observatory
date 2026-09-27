@@ -1,28 +1,53 @@
-import { TYPOLOGY_LABELS, isUnknown, predictedRentUsd, PGH_MEDIAN_GROSS_RENT, readField } from "./scoring.js";
+import { TYPOLOGY_LABELS, displacementGapUsd, isUnknown, predictedRentUsd, PGH_MEDIAN_GROSS_RENT, readField } from "./scoring.js?v=cdc13";
 import {
+  currentWalks,
   deckPairings,
   mapsUrl,
   walkLine,
   featuredPairing,
-} from "./match.js";
+} from "./match.js?v=cdc13";
 
 let pendingPlan = null;
 
-function walkDeck(sites, session, filters) {
-  const { pairings } = deckPairings(sites, session, filters);
-  const rankedWalk = filters.byRight ? pairings.filter((p) => p.verdict === "go") : pairings;
-  return rankedWalk.slice(0, 5);
+export const ASK_PROMPTS = [
+  "Where should I walk first?",
+  "Plan a walking order",
+  "Open Maps for this lot",
+  "What is the PIN?",
+  "Is this Land Bank land?",
+  "What is typical rent nearby?",
+];
+
+function esc(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
-function currentWalks(sites, session, filters) {
-  const extras = [];
-  for (const x of session.extraWalks || []) {
-    const site = sites.find((s) => s.site_id === x.siteId);
-    if (site) extras.push({ site, typology: x.typology });
-  }
-  const ranked = walkDeck(sites, session, filters);
-  const rest = ranked.filter((p) => !extras.some((e) => e.site.site_id === p.site.site_id));
-  return [...extras, ...rest].slice(0, Math.max(5, extras.length));
+function card({ kicker, title, items, links, note }) {
+  const list = items?.length
+    ? `<ol class="ask-ol">${items.map((t) => `<li>${t}</li>`).join("")}</ol>`
+    : "";
+  const hrefs = links?.length
+    ? `<p class="ask-links">${links
+        .map((l) => `<a href="${esc(l.href)}" target="_blank" rel="noopener">${esc(l.lab)}</a>`)
+        .join("")}</p>`
+    : "";
+  return `<div class="ask-card">
+    ${kicker ? `<p class="eyebrow">${esc(kicker)}</p>` : ""}
+    ${title ? `<p class="ask-title">${esc(title)}</p>` : ""}
+    ${list}
+    ${hrefs}
+    ${note ? `<p class="ask-note">${esc(note)}</p>` : ""}
+  </div>`;
+}
+
+function visitsOnList(sites, session, filters) {
+  const { pairings } = deckPairings(sites, session, filters);
+  const rankedWalk = filters.byRight ? pairings.filter((p) => p.verdict === "go") : pairings;
+  return currentWalks(sites, session, rankedWalk);
 }
 
 function coords(site) {
@@ -101,18 +126,31 @@ function splitDays(order) {
 }
 
 function oneDayText(order) {
-  const body = order.map((p, i) => lineFor(p, i + 1)).join(". Then ");
   const maps = dirUrl(order);
-  return `This week, walk in this order: ${body}.${maps ? ` Maps: ${maps}` : ""}`;
+  return card({
+    kicker: "One day",
+    title: `Walk these ${order.length} visits in this order.`,
+    items: order.map((p, i) => esc(lineFor(p, i + 1).replace(/^\d+\.\s*/, ""))),
+    links: maps ? [{ href: maps, lab: "Open route in Maps" }] : [],
+  });
 }
 
 function twoDayText(order) {
   const [d1, d2] = splitDays(order);
-  const a = d1.length ? d1.map((p, i) => lineFor(p, i + 1)).join(". Then ") : "nothing yet";
-  const b = d2.length ? d2.map((p, i) => lineFor(p, i + 1)).join(". Then ") : "nothing yet";
   const m1 = dirUrl(d1);
   const m2 = dirUrl(d2);
-  return `Split it across two days. Day 1: ${a}.${m1 ? ` Maps: ${m1}` : ""} Day 2: ${b}.${m2 ? ` Maps: ${m2}` : ""}`;
+  const links = [];
+  if (m1) links.push({ href: m1, lab: "Day 1 in Maps" });
+  if (m2) links.push({ href: m2, lab: "Day 2 in Maps" });
+  return card({
+    kicker: "Two days",
+    title: "Split the list at the longest gap between stops.",
+    items: [
+      `<strong>Day 1.</strong> ${d1.length ? d1.map((p) => esc(p.site.address)).join(" → ") : "Nothing yet."}`,
+      `<strong>Day 2.</strong> ${d2.length ? d2.map((p) => esc(p.site.address)).join(" → ") : "Nothing yet."}`,
+    ],
+    links,
+  });
 }
 
 function findNeighborhood(q, sites) {
@@ -141,28 +179,33 @@ function findSite(q, sites) {
 }
 
 function typeFromQuery(q) {
-  if (/\badu\b|accessory/.test(q)) return "adu";
+  if (/\badu\b|accessory/.test(q)) return "dropped_adu";
   if (/apartment|multifamily|small apartment/.test(q)) return "small_multifamily";
   if (/duplex|two-family|two family/.test(q)) return "duplex";
   return null;
 }
 
 function isRouteAsk(q) {
-  return /route|itinerar|optim|order to walk|walking order|which order|sequence|path|loop|tour|plan my walk|plan the walk|one day|two day|2 day|1 day|same day/.test(
+  return /route|itinerar|optim|order to walk|walking order|which order|sequence|path|loop|tour|plan my walk|plan the walk|plan a walking|one day|two day|2 day|1 day|same day/.test(
     q
   );
 }
 
 export function answerQuery(raw, { sites, session, filters }) {
   const q = raw.trim().toLowerCase();
-  if (!q) return "Ask a question about a lot or this week's visits.";
-
-  if (!session.missionSet) {
-    return "Set where you are walking this month first. Then I can name lots.";
+  if (!q) {
+    return card({ title: "Pick a prompt below.", note: "I only answer from your visits list and these city lots." });
   }
 
-  const five = currentWalks(sites, session, filters);
-  const top = five[0] || featuredPairing(five, session.lastPairing);
+  if (!session.missionSet) {
+    return card({
+      title: "Set this month's cut first.",
+      note: "Finish onboarding or Change this month's cut. Then I can name lots.",
+    });
+  }
+
+  const visits = visitsOnList(sites, session, filters);
+  const top = visits[0] || featuredPairing(visits, session.lastPairing);
   const place = findNeighborhood(q, sites);
   const site = findSite(q, sites);
   const type = typeFromQuery(q);
@@ -179,8 +222,10 @@ export function answerQuery(raw, { sites, session, filters }) {
   }
 
   if (isRouteAsk(q)) {
-    if (!five.length) return "Your walk list is empty. Add lots on Visits or Find a lot, then ask for a route.";
-    const order = orderStops(five);
+    if (!visits.length) {
+      return card({ title: "Your visits list is empty.", note: "Add lots on Visits or Find a lot, then ask for a route." });
+    }
+    const order = orderStops(visits);
     pendingPlan = order;
     const one = /one day|1 day|same day|today/.test(q);
     const two = /two day|2 day|split/.test(q);
@@ -192,64 +237,170 @@ export function answerQuery(raw, { sites, session, filters }) {
       pendingPlan = null;
       return twoDayText(order);
     }
-    return `I can order this week's ${order.length} lots so you walk nearby ones in a row. Are you viewing all of them in one day, or splitting across two days?`;
+    return card({
+      kicker: "Walking order",
+      title: `I can order your ${order.length} visits so nearby ones sit in a row.`,
+      note: "Reply with one day or two days.",
+    });
+  }
+
+  if (/land bank|plb|ura transfer|pathway|cluster|assembl|greenway|master plan|public land/.test(q) && !isRouteAsk(q)) {
+    const s = site || top?.site;
+    if (!s) {
+      return card({ title: "No lot is in focus.", note: "Set this month's cut, then ask about Land Bank, clusters, or by-right." });
+    }
+    const pin = readField(s, "pin");
+    return card({
+      kicker: s.inventory_type || "Public land",
+      title: s.address,
+      items: [
+        esc(`${s.current_status || "Status missing"}. City vacant land, not a private tax sale.`),
+        isUnknown(pin) ? "No PIN in this file." : `PIN ${esc(pin)}`,
+      ],
+      links: [{ href: mapsUrl(s), lab: "Open in Maps" }],
+      note: "Open CDC screen on the lot for pathway, 220-foot clusters, and by-right. VPRP is not in this dump.",
+    });
   }
 
   if (/help|what can|what do you/.test(q)) {
-    return "Try: give me a walking order. One day or two days? Where should I walk first? Open maps. What is the PIN?";
+    return card({
+      title: "I can do these six things.",
+      items: ASK_PROMPTS.map((t) => esc(t)),
+      note: "Tap a chip under the box. I do not invent ACS, carbon, or a named tenant.",
+    });
   }
 
   if (/first|top|should i walk|where should|this week|recommend|best/.test(q) && !place && !site) {
-    if (!top) return "Nothing to walk under this month's cut. Change neighborhoods or type.";
-    return `${walkLine(top.site, top.typology, top.verdict)} ${top.site.neighborhood_name}. Ask me for a walking order if you want 1 then 2 then 3.`;
+    if (!top) {
+      return card({ title: "Nothing to walk under this month's cut.", note: "Change neighborhoods or type." });
+    }
+    return card({
+      kicker: "First visit",
+      title: walkLine(top.site, top.typology, top.verdict),
+      items: [esc(top.site.neighborhood_name || "Pittsburgh")],
+      links: [{ href: mapsUrl(top.site), lab: "Open in Maps" }],
+      note: "Ask for a walking order if you want 1 then 2 then 3.",
+    });
   }
 
   if (/list|five|my visits|walk list/.test(q)) {
-    if (!five.length) return "Your walk list is empty under this month's answers.";
-    return five.map((p, i) => `${i + 1}. ${walkLine(p.site, p.typology, p.verdict)}`).join(" ");
+    if (!visits.length) {
+      return card({ title: "Your visits list is empty under this month's answers." });
+    }
+    return card({
+      kicker: "Your visits",
+      title: `${visits.length} lots in walk order.`,
+      items: visits.slice(0, 12).map((p) => esc(walkLine(p.site, p.typology, p.verdict))),
+    });
   }
 
   if ((/map|maps|google|directions|how do i get/.test(q) && (site || top)) || (/map/.test(q) && !site && top)) {
     const s = site || top.site;
-    return `Maps for ${s.address}: ${mapsUrl(s)}`;
+    return card({
+      kicker: "Maps",
+      title: s.address,
+      links: [{ href: mapsUrl(s), lab: "Open in Maps" }],
+    });
   }
 
   if (/pin|parcel/.test(q)) {
     const s = site || top?.site;
-    if (!s) return "No lot is in focus yet.";
+    if (!s) return card({ title: "No lot is in focus yet." });
     const pin = readField(s, "pin");
-    if (isUnknown(pin)) return `${s.address} has no PIN in this file, so I am not showing one.`;
-    return `PIN for ${s.address} is ${pin}. Copy it into the City sale record.`;
+    if (isUnknown(pin)) {
+      return card({ title: s.address, note: "No PIN in this file, so I am not showing one." });
+    }
+    return card({
+      kicker: "PIN",
+      title: s.address,
+      items: [esc(pin)],
+      note: "Copy it into the City sale record.",
+    });
   }
 
   if (place) {
     const local = sites.filter((s) => s.neighborhood_name === place);
-    const inCut = five.filter((p) => p.site.neighborhood_name === place);
+    const inCut = visits.filter((p) => p.site.neighborhood_name === place);
     if (inCut.length) {
-      return `${place}: walk ${inCut[0].site.address} for a ${TYPOLOGY_LABELS[inCut[0].typology].toLowerCase()}. ${inCut.length} of your visits are there.`;
+      return card({
+        kicker: place,
+        title: `Walk ${inCut[0].site.address} for a ${TYPOLOGY_LABELS[inCut[0].typology].toLowerCase()}.`,
+        items: [`${inCut.length} of your visits are in ${esc(place)}.`],
+        links: [{ href: mapsUrl(inCut[0].site), lab: "Open in Maps" }],
+      });
     }
-    return `${place} has ${local.length} city-owned vacant lots in the file. None made this week's list under your cut.`;
+    return card({
+      kicker: place,
+      title: `${local.length} city vacant lots in the file.`,
+      note: "None are on your visits list under this cut.",
+    });
+  }
+
+  if (type === "dropped_adu") {
+    return card({
+      title: "Accessory dwelling is not a type here.",
+      note: "Pittsburgh does not allow it citywide on these lots. The studio only matches two-family houses and small apartment buildings.",
+    });
   }
 
   if (type) {
-    const hits = five.filter((p) => p.typology === type);
+    const hits = visits.filter((p) => p.typology === type);
     if (hits.length) {
-      return `For ${TYPOLOGY_LABELS[type].toLowerCase()}, start at ${hits[0].site.address}.`;
+      return card({
+        kicker: TYPOLOGY_LABELS[type],
+        title: `Start at ${hits[0].site.address}.`,
+        links: [{ href: mapsUrl(hits[0].site), lab: "Open in Maps" }],
+      });
     }
     if (!(session.missionTypes || []).includes(type) && session.missionType !== "any" && session.missionType !== type) {
-      return `You did not pick ${TYPOLOGY_LABELS[type].toLowerCase()} for this month. Add it under what you want to put on the ground.`;
+      return card({
+        title: `You did not pick ${TYPOLOGY_LABELS[type].toLowerCase()} for this month.`,
+        note: "Add it under what you want to put on the ground.",
+      });
     }
-    return `No ${TYPOLOGY_LABELS[type].toLowerCase()} visit made the list. Zoning is blocking it in this cut, or nothing is for sale.`;
+    return card({
+      title: `No ${TYPOLOGY_LABELS[type].toLowerCase()} visit made the list.`,
+      note: "Zoning is blocking it in this cut, or nothing is for sale.",
+    });
   }
 
   if (site) {
-    const pairing = five.find((p) => p.site.site_id === site.site_id);
+    const pairing = visits.find((p) => p.site.site_id === site.site_id);
     const line = pairing
       ? walkLine(site, pairing.typology, pairing.verdict)
-      : `${site.address} is in ${site.neighborhood_name}. It is not in this week's list.`;
+      : `${site.address} is in ${site.neighborhood_name || "Pittsburgh"}. It is not on your visits list.`;
     const sq = Number(readField(site, "parc_sq_ft"));
-    const extra = Number.isFinite(sq) ? ` ${sq.toLocaleString()} sq ft.` : "";
-    return `${line}${extra}`;
+    return card({
+      kicker: site.neighborhood_name || "Lot",
+      title: line,
+      items: Number.isFinite(sq) ? [`${sq.toLocaleString()} sq ft`] : [],
+      links: [{ href: mapsUrl(site), lab: "Open in Maps" }],
+    });
+  }
+
+  if (/opportunit|scorecard|enterprise|360/.test(q)) {
+    return card({
+      title: "Open the visit dossier (CDC screen).",
+      note: "Tags, strengths vs watch-outs, then the five CDC filters. Ranking is in MATCHING.md.",
+    });
+  }
+
+  if (/displace|overpay|evict/.test(q)) {
+    const gap = top ? displacementGapUsd(top.site) : "unknown";
+    if (top && !isUnknown(gap) && gap > 0) {
+      return card({
+        kicker: "Displacement pressure",
+        title: top.site.address,
+        items: [
+          esc(`Neighbors typically pay about $${gap.toLocaleString()} more a month than typical income can carry.`),
+        ],
+        note: "Neighborhood pressure, not an eviction count. Walk only if the housing type stays affordable.",
+      });
+    }
+    return card({
+      title: "Displacement pressure is Census rent vs typical income.",
+      note: "Where ACS is missing, I hide it rather than guess.",
+    });
   }
 
   if (/rent|burden|census|pay|predict/.test(q)) {
@@ -264,32 +415,71 @@ export function answerQuery(raw, { sites, session, filters }) {
             ? `$${delta.toLocaleString()} above Pittsburgh typical ($${PGH_MEDIAN_GROSS_RENT.toLocaleString()})`
             : `in line with Pittsburgh typical ($${PGH_MEDIAN_GROSS_RENT.toLocaleString()})`;
       const pred = predictedRentUsd(top.site);
-      const predBit = isUnknown(pred)
-        ? ""
-        : ` Typical income there can carry about $${pred.toLocaleString()} at 30%.`;
-      return `People near ${top.site.address} typically pay about $${paid.toLocaleString()} a month. That is ${vs}.${predBit} Neighborhood typical, not a listing for this vacant lot. ACS is only filled for two Hill District tracts; elsewhere I hide it.`;
+      const items = [
+        esc(`Typical rent nearby is about $${paid.toLocaleString()} a month.`),
+        esc(vs),
+      ];
+      if (!isUnknown(pred)) items.push(esc(`Typical income can carry about $${pred.toLocaleString()} at 30%.`));
+      return card({
+        kicker: "Rent nearby",
+        title: top.site.address,
+        items,
+        note: "Tract typical, not a listing for this vacant lot.",
+      });
     }
-    return "Typical rent, predicted carry, renter share, and rent burden only exist for two Hill District census areas in this file. If a lot is outside those, I hide those fields rather than guessing.";
+    return card({
+      title: "No ACS rent on this tract.",
+      note: "I hide typical rent, carry, renter share, and burden rather than guessing.",
+    });
   }
 
   if (/bus|transit|stop/.test(q)) {
     const dist = top ? readField(top.site, "transit_distance_ft") : "unknown";
     if (!top || isUnknown(dist)) {
-      return "Bus distance is only on the original four Hill sample lots. I hide it everywhere else.";
+      return card({ title: "No bus distance on this lot.", note: "I hide it rather than guess." });
     }
-    return `Nearest Port Authority stop for ${top.site.address} is ${dist} feet.`;
+    return card({
+      kicker: "Bus",
+      title: top.site.address,
+      items: [esc(`${dist} feet to the nearest Port Authority stop.`)],
+      note: "Transit access, not a carbon score.",
+    });
   }
 
-  if (/slope|steep|climate/.test(q)) {
-    return "Slope and climate are not in this file, so they do not show on cards and I will not guess them.";
+  if (/slope|steep/.test(q)) {
+    const steep = top ? String(top.site.steep_slope || "").toLowerCase() : "";
+    if (steep === "yes") {
+      return card({
+        title: top.site.address,
+        note: "This point sits in the city's 25% or greater slope polygons.",
+      });
+    }
+    if (steep === "no") {
+      return card({ title: top?.site.address || "This lot", note: "Not inside those slope polygons in this file." });
+    }
+    return card({ title: "Slope was not joined on this lot.", note: "I will not guess it." });
+  }
+
+  if (/climate|carbon|flood|tree/.test(q)) {
+    return card({
+      title: "Climate on the pairing is flood, street trees, and bus distance.",
+      note: "Building operational carbon is not measured. Open the visit dossier for those tags.",
+    });
   }
 
   if (/compare/.test(q)) {
-    return "Open Compare and pick two lots. It will tell you which one to walk for the type you are deciding.";
+    return card({ title: "Open Compare and pick two lots.", note: "It names which one to walk for the type you are deciding." });
   }
 
   if (top) {
-    return `I did not catch a lot name. Your first visit is ${top.site.address}. Ask for a walking order, Maps, or a PIN.`;
+    return card({
+      title: "I did not catch a lot name.",
+      items: [esc(`Your first visit is ${top.site.address}.`)],
+      note: "Use a chip: walking order, Maps, or PIN.",
+    });
   }
-  return "I only answer from these city lots and your walk list. Ask for a walking order, or name a neighborhood.";
+  return card({
+    title: "I only answer from these city lots and your visits.",
+    note: "Tap a chip below.",
+  });
 }

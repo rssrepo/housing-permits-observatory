@@ -101,7 +101,6 @@ def why_winner(row: dict, result: dict, winner: str) -> list[str]:
     factors = result["typologies"][winner]["factors"]
     lines = []
     zkey = {
-        "adu": "zoning_allows_adu",
         "duplex": "zoning_allows_duplex",
         "small_multifamily": "zoning_allows_small_multifamily",
     }[winner]
@@ -132,7 +131,6 @@ def missing_labels(row: dict) -> list[str]:
         ("tract_median_income", "median income"),
         ("steep_slope", "steep slope"),
         ("transit_distance_ft", "transit distance"),
-        ("zoning_allows_adu", "ADU zoning"),
         ("zoning_allows_duplex", "duplex zoning"),
         ("zoning_allows_small_multifamily", "small multifamily zoning"),
     ]
@@ -193,7 +191,7 @@ labels = {
 st.markdown('<span class="eyebrow">For a CDC staffer  ·  four Pittsburgh lots</span>', unsafe_allow_html=True)
 st.markdown('<h1 class="hero-title">Pick a site. See what type of housing fits.</h1>', unsafe_allow_html=True)
 st.markdown(
-    '<p class="hero-lede">You are choosing among ADU, duplex, and small multifamily. '
+    '<p class="hero-lede">You are choosing among two-family houses and small apartment buildings. '
     "This is a ranking under your priorities, not a permit.</p>",
     unsafe_allow_html=True,
 )
@@ -273,7 +271,6 @@ with st.expander("Parcel snapshot"):
             "Inventory": shown(row, "inventory_type"),
             "Class": shown(row, "class"),
             "PIN": shown(row, "pin"),
-            "ADU": zoning_plain(row, "zoning_allows_adu"),
             "Duplex": zoning_plain(row, "zoning_allows_duplex"),
             "Small multifamily": zoning_plain(row, "zoning_allows_small_multifamily"),
         }
@@ -324,7 +321,7 @@ with st.expander("Limits and sources"):
 - Weights are one CDC-style framework.
 - Zoning is a Chapter 911 reading, not a ROZA or permit.
 - Vista St has no matching ACS tract in the 2024 5-year file; those cells stay blank.
-- ADU is not_allowed citywide in this build (CB 2025-1545 not adopted).
+- Accessory dwelling is not a type: it is not allowed citywide on these lots.
 - Not legal, financial, or zoning advice.
 
 Sources: [WPRDC City-Owned Properties](https://data.wprdc.org/dataset/city-owned-properties) (Data Use Agreement on that page);

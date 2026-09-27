@@ -1,18 +1,20 @@
 import {
   FACTOR_LABELS,
   FACTORS,
+  PGH_MEDIAN_GROSS_RENT,
+  PGH_MEDIAN_INCOME,
   TYPOLOGIES,
   TYPOLOGY_LABELS,
+  displacementGapUsd,
   isUnknown,
+  normalizeWeights,
+  predictedRentUsd,
   readField,
   scoreSite,
-  PGH_MEDIAN_GROSS_RENT,
-  predictedRentUsd,
   typicalRentUsd,
-} from "./scoring.js";
+} from "./scoring.js?v=cdc13";
 
 const ZONING_KEY = {
-  adu: "zoning_allows_adu",
   duplex: "zoning_allows_duplex",
   small_multifamily: "zoning_allows_small_multifamily",
 };
@@ -57,15 +59,9 @@ export const VERDICT_LABEL = {
 function whyZoning(site, typology) {
   const z = zoningAllows(site, typology);
   const district = districtPlain(site.zoned_as);
-  if (typology === "adu") {
-    if (z === "not_allowed") {
-      return "Pittsburgh does not yet allow accessory dwellings citywide. A pending council bill has not passed. A high number here is not permission.";
-    }
-    return `Accessory dwelling reading for ${district}: ${z}. Confirm with City Planning.`;
-  }
   if (typology === "duplex") {
     if (z === "by_right") {
-      return `A two-family house is allowed without a special hearing in ${district}. That is why it can outrank an accessory dwelling here.`;
+      return `A two-family house is allowed without a special hearing in ${district}.`;
     }
     if (z === "not_allowed") {
       return `${district} is not a two-family district. Do not visit to pursue a two-family house on this lot.`;
@@ -85,8 +81,8 @@ function whyZoning(site, typology) {
 function whyLot(site, typology) {
   const sq = Number(readField(site, "parc_sq_ft"));
   if (!Number.isFinite(sq)) return "Lot size is unknown, so buildability is incomplete.";
-  const full = { adu: 1800, duplex: 2800, small_multifamily: 5000 }[typology];
-  const floor = { adu: 800, duplex: 1200, small_multifamily: 1800 }[typology];
+  const full = { duplex: 2800, small_multifamily: 5000 }[typology];
+  const floor = { duplex: 1200, small_multifamily: 1800 }[typology];
   if (sq >= full) {
     return `The lot is ${sq.toLocaleString()} square feet, at or above the ${full.toLocaleString()} square foot comfort line we use for ${TYPOLOGY_LABELS[typology]}.`;
   }
@@ -149,12 +145,27 @@ export function typicalRentLine(site) {
   return parts.join(" ");
 }
 
+function whyDisplace(site, factors) {
+  const f = factors.displacement_risk;
+  if (!f || isUnknown(f.score)) {
+    return "Displacement pressure is missing for this tract, so it was left out of the mix.";
+  }
+  const gap = displacementGapUsd(site);
+  if (isUnknown(gap)) {
+    return `${readField(site, "tract_rent_burden_pct")}% of nearby renters are cost-burdened (Census). That is pressure, not an eviction count.`;
+  }
+  if (gap > 0) {
+    return `People nearby pay about $${gap.toLocaleString()} more a month than typical income can carry. A visit only makes sense if this housing type stays affordable.`;
+  }
+  return `Typical rent nearby is at or under what typical income can carry. Displacement pressure looks lower than in tighter tracts.`;
+}
+
 function whyClimate(site, factors) {
   const f = factors.climate_proxy;
   if (isUnknown(f.score)) {
     return "Distance to a bus stop is missing, so it was left out of the score.";
   }
-  return `${readField(site, "transit_distance_ft")} feet to the nearest Port Authority bus stop. Closer is treated as better. This is not a pollution model.`;
+  return `${readField(site, "transit_distance_ft")} feet to the nearest Port Authority bus stop. That is transit access, not a carbon model.`;
 }
 
 function whyWeights(weights, composite) {
@@ -198,6 +209,110 @@ export function factsStrip(site) {
     .join(" · ");
 }
 
+export function feetBetween(a, b) {
+  const lat1 = Number(a.latitude);
+  const lon1 = Number(a.longitude);
+  const lat2 = Number(b.latitude);
+  const lon2 = Number(b.longitude);
+  if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) return Infinity;
+  const r = 20902231;
+  const p1 = (lat1 * Math.PI) / 180;
+  const p2 = (lat2 * Math.PI) / 180;
+  const dp = ((lat2 - lat1) * Math.PI) / 180;
+  const dl = ((lon2 - lon1) * Math.PI) / 180;
+  const h = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+  return 2 * r * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+export function pathwayFor(site) {
+  const inv = String(site.inventory_type || "").trim();
+  if (inv === "PLB Transfer") {
+    return {
+      k: "Land Bank",
+      v: "WPRDC lists a Pittsburgh Land Bank transfer. Public land with a title-clearing path. Confirm with PLB before you treat it as ready.",
+    };
+  }
+  if (inv === "URA Transfer") {
+    return {
+      k: "URA",
+      v: "Already held for URA transfer. CDCs favor city/URA/Housing Authority land because the handoff is cleaner than a private tax sale.",
+    };
+  }
+  if (inv === "CDC Property Reserve") {
+    return {
+      k: "CDC reserve",
+      v: "Already in the CDC property reserve. This is earmarked inventory, not a random private lot.",
+    };
+  }
+  if (inv === "Public Sale") {
+    return {
+      k: "Public sale",
+      v: "On the city public-sale list. Still public land. Check Available for Sale versus Sale Pending, then title.",
+    };
+  }
+  return {
+    k: "Public land",
+    v: inv ? `Inventory type: ${inv}. This file is city vacant land, not private tax-delinquent stock.` : "City vacant land. Private tax-delinquent parcels are not in this file.",
+  };
+}
+
+export function assemblyAround(site, sites, maxFt = 220) {
+  return (sites || [])
+    .filter((s) => s && s.site_id !== site.site_id && feetBetween(site, s) <= maxFt)
+    .sort((a, b) => feetBetween(site, a) - feetBetween(site, b));
+}
+
+export function cdcScreen(site, sites) {
+  const path = pathwayFor(site);
+  const near = assemblyAround(site, sites);
+  const allowed = ["duplex", "small_multifamily"].filter((t) => zoningAllows(site, t) === "by_right");
+  const sq = Number(readField(site, "parc_sq_ft"));
+  const place = site.neighborhood_name || "this neighborhood";
+  return [
+    {
+      step: "1. Public land",
+      title: site.current_status || "City vacant lot",
+      body: `PIN ${isUnknown(readField(site, "pin")) ? "not listed" : readField(site, "pin")}. ${path.k}. WPRDC city-owned vacant land, not Parcels N'At private delinquency.`,
+    },
+    {
+      step: "2. Pathway",
+      title: path.k,
+      body: path.v,
+    },
+    {
+      step: "3. Assembly",
+      title: near.length ? `${near.length} city lot${near.length === 1 ? "" : "s"} within 220 ft` : "Isolated in this file",
+      body: near.length
+        ? `Cluster: ${near
+            .slice(0, 3)
+            .map((s) => s.address)
+            .join("; ")}. Contiguous assembly is how CDCs get mixed-income scale.`
+        : "No other city vacant lot in this file within 220 feet. Isolated lots are harder to build efficiently.",
+    },
+    {
+      step: "4. By-right density",
+      title: allowed.length ? allowed.map((t) => TYPOLOGY_LABELS[t]).join(" and ") : "No two-family or small apartment by-right",
+      body: Number.isFinite(sq)
+        ? `${sq.toLocaleString()} sq ft in ${districtPlain(site.zoned_as)}. Visit if the type is already allowed; skip a variance fight this week.`
+        : `Zoning ${districtPlain(site.zoned_as)}. Lot size missing.`,
+    },
+    {
+      step: "5. Stewardship",
+      title: place,
+      body:
+        String(site.steep_slope || "").toLowerCase() === "yes"
+          ? `This point sits in the city's 25% or greater slope polygons. Infill here fights hillside stewardship. Cross-check the ${place} plan before you treat it as a build site.`
+          : `Cross-check the ${place} master plan. Slope at this point is not flagged as 25%+. Greenway and Adopt-A-Lot programs are still not polygons in this file.`,
+    },
+  ];
+}
+
+export function assemblyNote(site, sites) {
+  const near = assemblyAround(site, sites);
+  if (!near.length) return "Isolated in this city vacant file: no neighbor lot within 220 feet.";
+  return `${near.length} other city vacant lot${near.length === 1 ? "" : "s"} within 220 feet. First: ${near[0].address}.`;
+}
+
 export function walkActionsHtml(site) {
   const pin = readField(site, "pin");
   const lat = Number(site.latitude);
@@ -209,11 +324,14 @@ export function walkActionsHtml(site) {
   const pinBtn = isUnknown(pin)
     ? ""
     : `<button type="button" class="pill ghost copy-pin" data-pin="${String(pin).replace(/"/g, "")}">Copy PIN</button>`;
-  if (!maps && !pinBtn) return "";
-  return `<div class="cta-row walk-actions">${maps}${pinBtn}</div>`;
+  const card = site.site_id
+    ? `<a class="pill ghost" href="#/scorecard/${site.site_id}">CDC screen</a>`
+    : "";
+  if (!maps && !pinBtn && !card) return "";
+  return `<div class="cta-row walk-actions">${maps}${pinBtn}${card}</div>`;
 }
 
-export function cardPoints(site, typology, verdict) {
+export function cardPoints(site, typology, verdict, weights) {
   const type = TYPOLOGY_LABELS[typology];
   const z = zoningAllows(site, typology);
   const district = districtPlain(site.zoned_as);
@@ -235,6 +353,8 @@ export function cardPoints(site, typology, verdict) {
   }
 
   if (Number.isFinite(sq)) rows.push({ k: "Lot", v: `${sq.toLocaleString()} square feet.` });
+  const path = pathwayFor(site);
+  rows.push({ k: "Pathway", v: `${path.k}. ${path.v}` });
   const rent = typicalRentUsd(site);
   const pred = predictedRentUsd(site);
   if (!isUnknown(rent)) {
@@ -256,6 +376,28 @@ export function cardPoints(site, typology, verdict) {
       v: `Typical income here can carry about $${pred.toLocaleString()} a month at 30%.`,
     });
   }
+  const gap = displacementGapUsd(site);
+  if (!isUnknown(gap) && gap > 0) {
+    rows.push({
+      k: "Displacement",
+      v: `People nearby pay about $${gap.toLocaleString()} more than typical income can carry. Walk only if this type stays affordable.`,
+    });
+  }
+  const bus = readField(site, "transit_distance_ft");
+  if (!isUnknown(bus)) {
+    rows.push({
+      k: "Opportunity",
+      v: `${bus} feet to a bus stop. Transit access, not jobs or schools.`,
+    });
+  }
+  if (weights) {
+    const n = normalizeWeights(weights);
+    const top = FACTORS.slice().sort((a, b) => n[b] - n[a])[0];
+    rows.push({
+      k: "Your mix",
+      v: `This rank uses your weights, not a city default. Strongest pull: ${FACTOR_LABELS[top].toLowerCase()}.`,
+    });
+  }
   if (!isUnknown(pin)) rows.push({ k: "PIN", v: pin });
   return rows;
 }
@@ -268,6 +410,346 @@ export function pointsHtml(points) {
     .join("")}</dl>`;
 }
 
+function numField(site, key) {
+  const n = Number(readField(site, key));
+  return Number.isFinite(n) ? n : null;
+}
+
+export function tradeoffSheet(site, typology, session = {}) {
+  const type = (TYPOLOGY_LABELS[typology] || "this type").toLowerCase();
+  const gain = [];
+  const cost = [];
+  const miss = [];
+  const z = zoningAllows(site, typology);
+  const sq = numField(site, "parc_sq_ft");
+  const share = numField(site, "tract_renter_share");
+  const burden = numField(site, "tract_rent_burden_pct");
+  const bus = numField(site, "transit_distance_ft");
+  const flood = String(site.flood_zone_nfhl || site.flood_zone || "").trim();
+  const sfha = String(site.flood_sfha || "").trim().toUpperCase();
+  const steep = String(site.steep_slope || "").trim().toLowerCase();
+  const trees = numField(site, "trees_400ft");
+  const treeCo2 = numField(site, "tree_co2_lbs");
+  const lihtcFt = numField(site, "lihtc_ft");
+  const gap = displacementGapUsd(site);
+  const rent = typicalRentUsd(site);
+  const pred = predictedRentUsd(site);
+  const w = normalizeWeights(session.weights || {});
+
+  if (z === "by_right") {
+    gain.push(`A ${type} is already allowed. The CDC is not spending this cycle on a variance.`);
+  } else if (z === "not_allowed") {
+    cost.push(`A ${type} is not allowed here. Treating this as a fit would ignore zoning.`);
+  } else {
+    miss.push(`Zoning for a ${type} is not a clean by-right reading in this file.`);
+  }
+
+  const otherAllowed = TYPOLOGIES.filter((t) => t !== typology && zoningAllows(site, t) === "by_right");
+  if (typology === "duplex" && otherAllowed.includes("small_multifamily")) {
+    cost.push("A small apartment is also allowed. You get a two-family house and give up more homes on the same lot.");
+  }
+  if (typology === "small_multifamily") {
+    gain.push("More homes on one city lot than a two-family house.");
+    if (otherAllowed.includes("duplex")) {
+      cost.push("Neighbors who wanted a house-scale building get apartments instead.");
+    }
+  }
+
+  const path = pathwayFor(site);
+  if (path.k === "Land Bank" || path.k === "URA" || path.k === "CDC reserve") {
+    gain.push(`${path.k} land. Public control, not a private speculative flip.`);
+  }
+
+  if (share != null) {
+    if (share >= 55) {
+      gain.push(`About ${share}% of nearby households already rent. A ${type} serves people in this market, not a homeowner-only block.`);
+    } else {
+      cost.push(`Only about ${share}% of nearby households rent. A ${type} may be more homes than this block currently absorbs.`);
+    }
+  } else {
+    miss.push("Census renter share is not on this tract, so demand is not claimed.");
+  }
+
+  if (!isUnknown(gap) && gap > 0) {
+    cost.push(
+      `Neighbors already pay about $${gap.toLocaleString()} a month more than typical income can carry. New ${type} units help only if they stay below that strain. We do not have a listing rent for this lot, so we do not claim they will.`
+    );
+  } else if (burden != null && burden >= 40) {
+    cost.push(`About ${burden}% of nearby renters are stretched on rent. Building without an affordability rule can add pressure.`);
+  }
+  if (!isUnknown(rent) && !isUnknown(pred) && rent <= pred) {
+    gain.push(`Typical rent nearby ($${rent.toLocaleString()}) sits at or under what typical income can carry ($${pred.toLocaleString()}). Less strain than the overpaying tracts.`);
+  }
+
+  if (sfha === "T") {
+    cost.push(`Live FEMA NFHL: special flood hazard area, zone ${flood || "listed"}. Building here takes on flood exposure. Confirm BFE on the FIRM.`);
+  } else if (flood) {
+    gain.push(`Live FEMA NFHL zone ${flood}${site.flood_subty ? ` (${String(site.flood_subty).toLowerCase()})` : ""}.`);
+  }
+  if (steep === "yes") {
+    cost.push("This point is inside the city's 25% or greater slope polygons. Infill here trades away easy grading and may belong in a conservation conversation.");
+  }
+  if (trees != null) {
+    if (trees >= 8) {
+      gain.push(`${trees} city street trees within 400 ft. More curb shade than a bare block. 2020 DPW inventory, not a heat raster.`);
+    } else {
+      cost.push(`Only ${trees} city street trees within 400 ft. Less shade at the curb. Heat island is still not a satellite temperature on this lot.`);
+    }
+  }
+  if (treeCo2 != null && treeCo2 > 0) {
+    gain.push(`Those street trees sequester about ${Math.round(treeCo2).toLocaleString()} lbs CO2/year on the city's forestry calculator. That is not operational carbon of a new building.`);
+  }
+  if (lihtcFt != null) {
+    const nm = site.lihtc_name || "a LIHTC property";
+    if (lihtcFt <= 1320) {
+      cost.push(`HUD LIHTC already nearby: ${nm} about ${lihtcFt.toLocaleString()} ft away${site.lihtc_units ? ` (${site.lihtc_units} units)` : ""}. Another credit deal is a QAP competition, not a vacant-lot yes.`);
+    } else {
+      gain.push(`Nearest mapped HUD LIHTC is ${lihtcFt.toLocaleString()} ft (${nm}). This walk is not on top of that project point.`);
+    }
+  }
+  if (site.who_note) {
+    gain.push(site.who_note);
+  }
+
+  if (bus != null) {
+    if (bus <= 1320) {
+      gain.push(`${Math.round(bus)} feet to a bus stop. Transit access for new households.`);
+    } else {
+      cost.push(`${Math.round(bus)} feet to a bus stop. You give up a short walk to transit.`);
+    }
+  } else {
+    miss.push("No bus distance on this lot. Transit is not claimed.");
+  }
+
+  miss.push("Operational carbon of a new building is not measured. Tree calculator pounds are street trees only.");
+  if (steep !== "yes" && steep !== "no") {
+    miss.push("Steep-slope overlay was not joined on this lot.");
+  }
+  if (share == null && isUnknown(rent)) {
+    miss.push("ACS 2024 5-year has no tables for this tract GEOID. Left blank, not filled from a neighbor.");
+  }
+
+  if (w.displacement_risk >= 0.28 && !isUnknown(gap) && gap > 0) {
+    cost.unshift("Your mix flagged overpaying neighbors as important. Walking this lot for more homes trades that concern for units.");
+  }
+  if (w.demand_fit >= 0.28 && share != null && share >= 55) {
+    gain.unshift("Your mix asked for renter blocks. This tract matches that.");
+  }
+
+  const uniq = (arr) => [...new Set(arr)].slice(0, 5);
+  return { gain: uniq(gain), cost: uniq(cost), miss: uniq(miss) };
+}
+
+function tagHtml(tags) {
+  return `<div class="tag-row">${(tags || [])
+    .map((t) => `<span class="tag tag-${t.tone || "info"}">${t.label}</span>`)
+    .join("")}</div>`;
+}
+
+export function scorecardTags(site, sites) {
+  const tags = [];
+  const path = pathwayFor(site);
+  tags.push({ label: path.k, tone: "info" });
+  if (site.current_status) tags.push({ label: site.current_status, tone: "info" });
+  const near = assemblyAround(site, sites);
+  tags.push({
+    label: near.length ? `${near.length} lot cluster` : "Isolated lot",
+    tone: near.length ? "go" : "warn",
+  });
+  const allowed = ["duplex", "small_multifamily"].filter((t) => zoningAllows(site, t) === "by_right");
+  tags.push({
+    label: allowed.length ? allowed.map((t) => TYPOLOGY_LABELS[t]).join(" + ") : "No by-right density",
+    tone: allowed.length ? "go" : "bad",
+  });
+  const sfha = String(site.flood_sfha || "").toUpperCase();
+  const flood = String(site.flood_zone_nfhl || site.flood_zone || "").trim();
+  if (sfha === "T") tags.push({ label: `Flood ${flood || "SFHA"}`, tone: "bad" });
+  else if (flood) tags.push({ label: `NFHL ${flood}`, tone: "go" });
+  const steep = String(site.steep_slope || "").toLowerCase();
+  if (steep === "yes") tags.push({ label: "25%+ slope", tone: "bad" });
+  else if (steep === "no") tags.push({ label: "Not a steep polygon", tone: "go" });
+  const trees = numField(site, "trees_400ft");
+  if (trees != null) tags.push({ label: `${trees} street trees / 400 ft`, tone: trees >= 8 ? "go" : "warn" });
+  const lihtc = numField(site, "lihtc_ft");
+  if (lihtc != null) {
+    tags.push({
+      label: lihtc <= 1320 ? "LIHTC nearby" : `LIHTC ${Math.round(lihtc).toLocaleString()} ft`,
+      tone: lihtc <= 1320 ? "warn" : "info",
+    });
+  }
+  const share = numField(site, "tract_renter_share");
+  if (share == null) tags.push({ label: "No tract ACS", tone: "warn" });
+  return tags;
+}
+
+function marketRows(site) {
+  const rows = [];
+  const sq = numField(site, "parc_sq_ft");
+  const allowed = TYPOLOGIES.filter((t) => zoningAllows(site, t) === "by_right");
+  rows.push({
+    tone: allowed.length ? "go" : "bad",
+    k: "By-right types",
+    v: allowed.length ? allowed.map((t) => TYPOLOGY_LABELS[t]).join(", ") : "Neither type by-right",
+    more: `${Number.isFinite(sq) ? `${sq.toLocaleString()} sq ft. ` : ""}${districtPlain(site.zoned_as)}.`,
+  });
+  const rent = typicalRentUsd(site);
+  const pred = predictedRentUsd(site);
+  const gap = displacementGapUsd(site);
+  const burden = numField(site, "tract_rent_burden_pct");
+  if (!isUnknown(rent) || burden != null) {
+    const bits = [];
+    if (!isUnknown(rent)) bits.push(`Typical rent nearby $${rent.toLocaleString()}. Pittsburgh typical $${PGH_MEDIAN_GROSS_RENT.toLocaleString()}.`);
+    if (burden != null) bits.push(`${burden}% of nearby renters spend 30% or more of income on rent.`);
+    if (!isUnknown(gap) && gap > 0) bits.push(`About $${gap.toLocaleString()} over a 30% income carry.`);
+    rows.push({
+      tone: !isUnknown(gap) && gap > 0 ? "warn" : "info",
+      k: "Rent nearby",
+      v: !isUnknown(rent) ? `$${rent.toLocaleString()} / mo` : `${burden}% burden`,
+      more: bits.join(" "),
+    });
+  } else {
+    rows.push({
+      tone: "warn",
+      k: "Rent nearby",
+      v: "Not on this tract",
+      more: `City typical rent $${PGH_MEDIAN_GROSS_RENT.toLocaleString()} is a floor, not this block.`,
+    });
+  }
+  const inc = numField(site, "tract_median_income");
+  if (inc != null) {
+    const pct = Math.round((inc / PGH_MEDIAN_INCOME) * 100);
+    rows.push({
+      tone: "info",
+      k: "Typical income",
+      v: `$${Math.round(inc).toLocaleString()} (${pct}% of city)`,
+      more: `${site.who_note || "Tract typical versus Pittsburgh ACS typical."}${!isUnknown(pred) ? ` Carry at 30% is about $${pred.toLocaleString()} a month.` : ""}`,
+    });
+  } else {
+    rows.push({
+      tone: "warn",
+      k: "Typical income",
+      v: "Not on this tract",
+      more: `No ACS income. City typical is $${PGH_MEDIAN_INCOME.toLocaleString()}. That is not a household on this lot.`,
+    });
+  }
+  const bus = numField(site, "transit_distance_ft");
+  rows.push({
+    tone: bus == null ? "warn" : bus <= 1320 ? "go" : "warn",
+    k: "Bus",
+    v: bus == null ? "Not joined" : `${Math.round(bus).toLocaleString()} ft`,
+    more: "Port Authority stop distance. Transit access, not jobs, schools, or carbon kilograms.",
+  });
+  const trees = numField(site, "trees_400ft");
+  const co2 = numField(site, "tree_co2_lbs");
+  rows.push({
+    tone: trees == null ? "warn" : trees >= 8 ? "go" : "warn",
+    k: "Curb shade",
+    v: trees == null ? "No tree count" : `${trees} trees / 400 ft`,
+    more: co2
+      ? `City forestry calculator: about ${Math.round(co2).toLocaleString()} lbs CO2/year on those street trees. Not operational carbon of a new building. DPW inventory ~2020.`
+      : "DPW street-tree inventory within 400 ft. Not a satellite heat raster.",
+  });
+  const lihtc = numField(site, "lihtc_ft");
+  rows.push({
+    tone: lihtc == null ? "warn" : lihtc <= 1320 ? "warn" : "info",
+    k: "Nearest LIHTC",
+    v: lihtc == null ? "Not mapped" : `${Math.round(lihtc).toLocaleString()} ft`,
+    more: site.lihtc_name
+      ? `${site.lihtc_name}${site.lihtc_units ? ` · ${site.lihtc_units} units` : ""}. HUD mapped project point. QAP is a separate competition.`
+      : "Distance to nearest HUD LIHTC point in Pittsburgh.",
+  });
+  return rows;
+}
+
+export function scorecardHtml(site, sites, session) {
+  const tags = scorecardTags(site, sites);
+  const screens = cdcScreen(site, sites);
+  const best = sortPairings(TYPOLOGIES.map((t) => buildPairing(site, t, session)))[0];
+  const sheet = best?.tradeoffs || { gain: [], cost: [], miss: [] };
+  const mix = best
+    ? FACTORS.map((k) => {
+        const f = best.factors[k];
+        const n = f && !isUnknown(f.score) ? Number(f.score) : null;
+        return { k: FACTOR_LABELS[k], n, detail: f?.detail || "Left out" };
+      })
+    : [];
+  const col = (title, tone, items) =>
+    `<article class="sw-col ${tone}">
+      <p class="eyebrow">${title}</p>
+      <ul>${(items && items.length ? items : ["Nothing named from this file."]).map((t) => `<li>${t}</li>`).join("")}</ul>
+    </article>`;
+  const rail = screens
+    .map(
+      (s, i) => `<article class="rail-step">
+        <span class="rail-n">${i + 1}</span>
+        <div>
+          <p class="eyebrow">${s.step.replace(/^\d+\.\s*/, "")}</p>
+          <h3 class="serif">${s.title}</h3>
+          <p>${s.body}</p>
+        </div>
+      </article>`
+    )
+    .join("");
+  const facts = marketRows(site)
+    .map(
+      (r) => `<div class="fact-row tone-${r.tone}">
+        <div>
+          <span class="tag tag-${r.tone}">${r.k}</span>
+          <strong>${r.v}</strong>
+        </div>
+        <details class="more"><summary>More</summary><p>${r.more}</p></details>
+      </div>`
+    )
+    .join("");
+  const mixHtml = mix
+    .map((m) => {
+      const w = m.n == null ? 0 : Math.max(4, Math.min(100, m.n));
+      return `<div class="mix-row">
+        <span>${m.k}</span>
+        <div class="opp-track ${m.n == null ? "empty" : ""}">${m.n == null ? "" : `<span class="opp-fill" style="width:${w}%"></span>`}</div>
+        <b>${m.n == null ? "—" : Math.round(m.n)}</b>
+      </div>`;
+    })
+    .join("");
+  const call = best ? VERDICT_LABEL[best.verdict] : "Hold";
+  const type = best ? TYPOLOGY_LABELS[best.typology] : "";
+  const n = best && !isUnknown(best.score) ? Math.round(Number(best.score)) : "—";
+  return `
+    <div class="dossier-head card">
+      ${tagHtml(tags)}
+      <p class="eyebrow">${site.neighborhood_name || "Pittsburgh"} · PIN ${isUnknown(readField(site, "pin")) ? "none" : readField(site, "pin")}</p>
+      <h2 class="serif pairing-title">${site.address}</h2>
+      <p class="brief"><span class="verdict ${best?.verdict || "caution"}">${call}</span> Best type on file: <strong>${type}</strong>. Mix ${n} under your weights. Zoning is the visit gate; the number only orders lots that share a call.</p>
+    </div>
+    <div class="sw-grid">
+      ${col("Strengths", "go", sheet.gain)}
+      ${col("Watch-outs", "bad", sheet.cost)}
+    </div>
+    <p class="eyebrow" style="margin-top:1.2rem">CDC filters</p>
+    <div class="rail">${rail}</div>
+    <p class="eyebrow" style="margin-top:1.2rem">On this lot</p>
+    <div class="fact-list card">${facts}</div>
+    <p class="eyebrow" style="margin-top:1.2rem">Why this type ranks</p>
+    <div class="card mix-card">${mixHtml}
+      <p class="small">Unknown bars are empty on purpose. Flood, trees, and LIHTC are tags above, not part of this mix. ${sheet.miss[0] || ""}</p>
+    </div>`;
+}
+
+export function tradeoffHtml(sheet) {
+  if (!sheet) return "";
+  const col = (eyebrow, title, items) =>
+    `<article class="card tradeoff-col">
+      <p class="eyebrow">${eyebrow}</p>
+      <h3 class="serif">${title}</h3>
+      <ul>${(items && items.length ? items : ["Nothing named from this file."]).map((t) => `<li>${t}</li>`).join("")}</ul>
+    </article>`;
+  return `<div class="tradeoff-grid">
+    ${col("Who benefits", "You get", sheet.gain)}
+    ${col("Who might be harmed", "You give up", sheet.cost)}
+    ${col("What we get wrong", "Not answered", sheet.miss)}
+  </div>`;
+}
+
 export function pairingKey(siteId, typology) {
   return `${siteId}:${typology}`;
 }
@@ -278,29 +760,33 @@ export function parsePairingKey(key) {
 }
 
 export function buildPairing(site, typology, session) {
+  const t = TYPOLOGIES.includes(typology) ? typology : "duplex";
   const result = scoreSite(site, session.weights);
-  const block = result.typologies[typology];
-  const verdict = verdictFor(site, typology);
+  const block = result.typologies[t];
+  const verdict = verdictFor(site, t);
   const score = block.composite.score;
   const why = [
-    whyZoning(site, typology),
-    whyLot(site, typology),
+    whyZoning(site, t),
+    whyLot(site, t),
     whyDemand(site, block.factors),
     whyAfford(site, block.factors),
+    whyDisplace(site, block.factors),
     whyClimate(site, block.factors),
     whyWeights(session.weights, block.composite),
   ];
-  const brief = matchBrief(session, site, typology, verdict, score, block);
-  const points = cardPoints(site, typology, verdict);
+  const brief = matchBrief(session, site, t, verdict, score, block);
+  const points = cardPoints(site, t, verdict, session.weights);
+  const tradeoffs = tradeoffSheet(site, t, session);
   return {
-    key: pairingKey(site.site_id, typology),
+    key: pairingKey(site.site_id, t),
     site,
-    typology,
+    typology: t,
     verdict,
     score,
     why,
     brief,
     points,
+    tradeoffs,
     factors: block.factors,
     composite: block.composite,
   };
@@ -327,6 +813,39 @@ export function sortPairings(rows) {
   });
 }
 
+export function stampClusters(sites) {
+  const cell = 0.00075;
+  const buckets = new Map();
+  (sites || []).forEach((s) => {
+    const lat = Number(s.latitude);
+    const lon = Number(s.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      s._cluster_n = 0;
+      return;
+    }
+    const key = `${Math.round(lat / cell)}_${Math.round(lon / cell)}`;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(s);
+  });
+  (sites || []).forEach((s) => {
+    const lat = Number(s.latitude);
+    const lon = Number(s.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      s._cluster_n = 0;
+      return;
+    }
+    const cx = Math.round(lat / cell);
+    const cy = Math.round(lon / cell);
+    let n = 0;
+    for (let dx = -1; dx <= 1; dx += 1) {
+      for (let dy = -1; dy <= 1; dy += 1) {
+        n += (buckets.get(`${cx + dx}_${cy + dy}`) || []).length;
+      }
+    }
+    s._cluster_n = Math.max(0, n - 1);
+  });
+}
+
 export function filterSites(sites, f = {}) {
   const q = (f.q || "").trim().toLowerCase();
   return sites.filter((s) => {
@@ -343,6 +862,42 @@ export function filterSites(sites, f = {}) {
       const pin = String(s.pin || "").toLowerCase().replace(/[^a-z0-9]/g, "");
       const hit = blob.includes(q) || (compact.length >= 3 && pin.includes(compact));
       if (!hit) return false;
+    }
+    if (f.inventoryTypes && f.inventoryTypes.length) {
+      if (!f.inventoryTypes.includes(s.inventory_type)) return false;
+    }
+    if (f.skipSfha && String(s.flood_sfha || "").toUpperCase() === "T") return false;
+    if (f.skipSteep && String(s.steep_slope || "").toLowerCase() === "yes") return false;
+    if (f.transitMaxFt > 0) {
+      const dist = Number(s.transit_distance_ft);
+      if (Number.isFinite(dist) && dist > f.transitMaxFt) return false;
+    }
+    if (f.minTrees > 0) {
+      const t = Number(s.trees_400ft);
+      if (!Number.isFinite(t) || t < f.minTrees) return false;
+    }
+    if (f.lihtc === "near") {
+      const ft = Number(s.lihtc_ft);
+      if (!Number.isFinite(ft) || ft > 1320) return false;
+    }
+    if (f.lihtc === "avoid") {
+      const ft = Number(s.lihtc_ft);
+      if (Number.isFinite(ft) && ft <= 1320) return false;
+    }
+    if (f.minCluster > 0 && Number(s._cluster_n || 0) < f.minCluster) return false;
+    if (f.minRenter > 0) {
+      const share = Number(s.tract_renter_share);
+      if (Number.isFinite(share) && share < f.minRenter) return false;
+    }
+    if (f.lowerIncome) {
+      const vs = Number(s.income_vs_city_pct);
+      if (Number.isFinite(vs) && vs >= 100) return false;
+    }
+    if (f.avoidPressure) {
+      const gap = displacementGapUsd(s);
+      const burden = Number(s.tract_rent_burden_pct);
+      if (!isUnknown(gap) && gap > 0) return false;
+      if (Number.isFinite(burden) && burden >= 40) return false;
     }
     return true;
   });
@@ -386,6 +941,27 @@ export function featuredPairing(pairings, lastKey) {
   return pairings.find((p) => p.verdict === "go") || pairings[0];
 }
 
+export function currentWalks(sites, session, rankedWalk) {
+  const extras = (session.extraWalks || [])
+    .map((x) => {
+      const site = (sites || []).find((s) => s.site_id === x.siteId);
+      if (!site) return null;
+      const typology =
+        x.typology && TYPOLOGIES.includes(x.typology)
+          ? x.typology
+          : TYPOLOGIES.find((t) => verdictFor(site, t) === "go") || "duplex";
+      return buildPairing(site, typology, session);
+    })
+    .filter(Boolean);
+  const rest = (rankedWalk || []).filter((p) => !extras.some((e) => e.site.site_id === p.site.site_id));
+  const seen = new Set();
+  return [...extras, ...rest].filter((p) => {
+    if (seen.has(p.site.site_id)) return false;
+    seen.add(p.site.site_id);
+    return true;
+  });
+}
+
 function callRank(verdict) {
   return { go: 0, caution: 1, "no-go": 2 }[verdict] ?? 3;
 }
@@ -406,7 +982,7 @@ export function pickCompareType(left, right, session, preferred) {
   return oneGo || leftBest?.typology || "duplex";
 }
 
-export function compareInsight(leftSite, rightSite, session, preferredType) {
+export function compareInsight(leftSite, rightSite, session, preferredType, allSites = []) {
   if (!leftSite || !rightSite) {
     return {
       type: preferredType && preferredType !== "any" ? preferredType : "duplex",
@@ -475,6 +1051,20 @@ export function compareInsight(leftSite, rightSite, session, preferredType) {
     );
   }
 
+  const pathW = pathwayFor(winner.site);
+  const pathL = pathwayFor(loser.site);
+  if (pathW.k !== pathL.k) {
+    reasons.push(`Acquisition path: ${pathW.k} on ${winner.site.address} vs ${pathL.k} on the other lot.`);
+  }
+
+  const nW = assemblyAround(winner.site, allSites).length;
+  const nL = assemblyAround(loser.site, allSites).length;
+  if (nW > nL + 1) {
+    reasons.push(
+      `Better assembly: ${nW} nearby city vacant lots within 220 ft vs ${nL}. CDCs prefer clusters over isolated lots.`
+    );
+  }
+
   const places = session.missionPlaces || [];
   if (places.length) {
     const inW = places.includes(winner.site.neighborhood_name);
@@ -519,9 +1109,36 @@ export function compareInsight(leftSite, rightSite, session, preferredType) {
     );
   }
 
+  const gapW = displacementGapUsd(winner.site);
+  const gapL = displacementGapUsd(loser.site);
+  if (!isUnknown(gapW) && gapW > 0 && (isUnknown(gapL) || gapW !== gapL)) {
+    reasons.push(
+      `Displacement pressure is higher here: neighbors pay about $${gapW.toLocaleString()} more than typical income can carry. Walk only if the ${typeLabel} stays affordable.`
+    );
+  }
+
+  const wMix = normalizeWeights(session.weights || {});
+  let tip = null;
+  let tipDelta = 0;
+  for (const k of FACTORS) {
+    const nw = factorNum(winner, k);
+    const nl = factorNum(loser, k);
+    if (nw == null || nl == null) continue;
+    const d = wMix[k] * (nw - nl);
+    if (d > tipDelta) {
+      tipDelta = d;
+      tip = k;
+    }
+  }
+  if (tip && tipDelta >= 0.4) {
+    reasons.push(
+      `Your mix tipped this. You weighted ${FACTOR_LABELS[tip].toLowerCase()} more, and ${winner.site.address} scores higher there. Change the mix in onboarding if that is not what you meant.`
+    );
+  }
+
   if (!reasons.length) {
     reasons.push(
-      `Both lots can take a ${typeLabel}. ${winner.site.address} ranks higher on the mix you set this month (allowed type, renter blocks, rent need, bus).`
+      `Both lots can take a ${typeLabel}. ${winner.site.address} ranks higher on the mix you set this month.`
     );
   }
 
@@ -534,5 +1151,5 @@ export function compareInsight(leftSite, rightSite, session, preferredType) {
     headline = `Skip both for a ${typeLabel}.`;
   }
 
-  return { type, left, right, winner, loser, headline, reasons: reasons.slice(0, 3) };
+  return { type, left, right, winner, loser, headline, reasons: reasons.slice(0, 4) };
 }

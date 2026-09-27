@@ -1,30 +1,30 @@
 export const UNKNOWN = "unknown";
-export const TYPOLOGIES = ["adu", "duplex", "small_multifamily"];
+export const TYPOLOGIES = ["duplex", "small_multifamily"];
 export const TYPOLOGY_LABELS = {
-  adu: "Accessory dwelling",
   duplex: "Two-family house",
   small_multifamily: "Small apartment building",
 };
-export const FACTORS = ["feasibility", "demand_fit", "affordability_impact", "climate_proxy"];
+export const FACTORS = ["feasibility", "demand_fit", "affordability_impact", "displacement_risk", "climate_proxy"];
 export const FACTOR_LABELS = {
   feasibility: "Allowed to build, lot is big enough",
   demand_fit: "Neighbors who rent",
   affordability_impact: "Neighbors stretched on rent",
+  displacement_risk: "Neighbors already overpaying rent",
   climate_proxy: "Close to a bus stop",
 };
 export const FACTOR_HELP = {
   feasibility: "Zoning permission plus whether the lot is large enough for this housing type.",
   demand_fit: "Share of nearby households that rent, from the Census. Not a waitlist.",
   affordability_impact: "Share of nearby renters who spend 30% or more of income on rent. Typical neighborhood rent is ACS median gross rent, not a listing for this lot.",
-  climate_proxy: "Walking distance to the nearest Port Authority bus stop. Not a pollution score.",
+  displacement_risk: "Gap between typical rent paid nearby and what typical income can carry at 30%. Neighborhood pressure, not a household eviction model.",
+  climate_proxy: "Walking distance to the nearest Port Authority bus stop. Transit access, not a carbon score.",
 };
 const ZONING_FIELDS = {
-  adu: "zoning_allows_adu",
   duplex: "zoning_allows_duplex",
   small_multifamily: "zoning_allows_small_multifamily",
 };
-const LOT_FULL = { adu: 1800, duplex: 2800, small_multifamily: 5000 };
-const LOT_MIN = { adu: 800, duplex: 1200, small_multifamily: 1800 };
+const LOT_FULL = { duplex: 2800, small_multifamily: 5000 };
+const LOT_MIN = { duplex: 1200, small_multifamily: 1800 };
 
 export function isUnknown(v) {
   return v === UNKNOWN;
@@ -109,7 +109,7 @@ function demandFit(row, typology) {
   if (isUnknown(share)) {
     return { status: UNKNOWN, score: UNKNOWN, source: "tract_renter_share", detail: "Insufficient data" };
   }
-  const bump = { adu: 0.9, duplex: 1.0, small_multifamily: 1.05 }[typology];
+  const bump = { duplex: 1.0, small_multifamily: 1.05 }[typology];
   return {
     status: "from_data",
     score: Math.round(clamp(share * bump) * 10) / 10,
@@ -123,12 +123,38 @@ function affordability(row, typology) {
   if (isUnknown(burden)) {
     return { status: UNKNOWN, score: UNKNOWN, source: "tract_rent_burden_pct", detail: "Insufficient data" };
   }
-  const bump = { adu: 0.85, duplex: 0.95, small_multifamily: 1.0 }[typology];
+  const bump = { duplex: 0.95, small_multifamily: 1.0 }[typology];
   return {
     status: "from_data",
     score: Math.round(clamp(burden * bump) * 10) / 10,
     source: "tract_rent_burden_pct",
     detail: `rent burden ${burden}%`,
+  };
+}
+
+function displacement(row, typology) {
+  const burden = parseFloatField(row, "tract_rent_burden_pct");
+  const paid = typicalRentUsd(row);
+  const pred = predictedRentUsd(row);
+  if (isUnknown(paid) || isUnknown(pred) || pred <= 0) {
+    if (isUnknown(burden)) {
+      return { status: UNKNOWN, score: UNKNOWN, source: "tract_median_gross_rent", detail: "Insufficient data" };
+    }
+    return {
+      status: "from_data",
+      score: Math.round(clamp(burden) * 10) / 10,
+      source: "tract_rent_burden_pct",
+      detail: `rent burden ${burden}%`,
+    };
+  }
+  const overPct = clamp(((paid - pred) / pred) * 100);
+  const burdenPart = isUnknown(burden) ? overPct : burden;
+  const bump = { duplex: 1.0, small_multifamily: 0.92 }[typology];
+  return {
+    status: "from_data",
+    score: Math.round(clamp((0.55 * burdenPart + 0.45 * overPct) * bump) * 10) / 10,
+    source: "tract_median_gross_rent + tract_median_income",
+    detail: `paid $${paid} vs carry $${pred}`,
   };
 }
 
@@ -138,7 +164,7 @@ function climate(row, typology) {
     return { status: UNKNOWN, score: UNKNOWN, source: "transit_distance_ft", detail: "Insufficient data" };
   }
   const access = 100 - linear(dist, 400, 2640);
-  const density = { adu: 0, duplex: 8, small_multifamily: 16 }[typology];
+  const density = { duplex: 8, small_multifamily: 16 }[typology];
   return {
     status: "from_data",
     score: Math.round(clamp(access + density) * 10) / 10,
@@ -151,13 +177,14 @@ const FNS = {
   feasibility,
   demand_fit: demandFit,
   affordability_impact: affordability,
+  displacement_risk: displacement,
   climate_proxy: climate,
 };
 
 export function normalizeWeights(weights) {
   const cleaned = Object.fromEntries(FACTORS.map((k) => [k, Math.max(0, Number(weights[k] || 0))]));
   const total = FACTORS.reduce((s, k) => s + cleaned[k], 0);
-  if (total <= 0) return Object.fromEntries(FACTORS.map((k) => [k, 0.25]));
+  if (total <= 0) return Object.fromEntries(FACTORS.map((k) => [k, 1 / FACTORS.length]));
   return Object.fromEntries(FACTORS.map((k) => [k, cleaned[k] / total]));
 }
 
@@ -209,6 +236,13 @@ export function predictedRentUsd(row) {
   return Math.round((inc * 0.3) / 12);
 }
 
+export function displacementGapUsd(row) {
+  const paid = typicalRentUsd(row);
+  const pred = predictedRentUsd(row);
+  if (isUnknown(paid) || isUnknown(pred)) return UNKNOWN;
+  return paid - pred;
+}
+
 export function missingFields(row) {
   const checks = [
     ["tract_renter_share", "Neighbors who rent"],
@@ -224,4 +258,129 @@ export function acsGaps(row) {
   return ["tract_renter_share", "tract_rent_burden_pct", "tract_median_income", "tract_median_gross_rent"].filter((k) =>
     isUnknown(readField(row, k))
   );
+}
+
+export const PGH_MEDIAN_INCOME = 65742;
+
+export function opportunityOutcomes(site) {
+  const burdenRaw = readField(site, "tract_rent_burden_pct");
+  const incomeRaw = readField(site, "tract_median_income");
+  const distRaw = readField(site, "transit_distance_ft");
+  const paid = typicalRentUsd(site);
+  const pred = predictedRentUsd(site);
+  const gap = displacementGapUsd(site);
+  const sq = Number(readField(site, "parc_sq_ft"));
+
+  const allowed = TYPOLOGIES.filter((t) => {
+    const raw = readField(site, `zoning_allows_${t}`);
+    return raw === "by_right";
+  });
+  const buildScore = Math.round((allowed.length / TYPOLOGIES.length) * 1000) / 10;
+  const typeBits = TYPOLOGIES.map((t) => {
+    const raw = readField(site, `zoning_allows_${t}`);
+    const lab = TYPOLOGY_LABELS[t];
+    if (raw === "by_right") return `${lab} is allowed without a hearing.`;
+    if (raw === "not_allowed") return `${lab} is not allowed.`;
+    return `${lab} zoning is not in this file.`;
+  });
+
+  const housing = (() => {
+    if (!isUnknown(paid) || !isUnknown(burdenRaw)) {
+      const burden = isUnknown(burdenRaw) ? null : Number(burdenRaw);
+      const score = burden != null && Number.isFinite(burden) ? Math.round(clamp(100 - burden) * 10) / 10 : UNKNOWN;
+      const bits = [];
+      if (!isUnknown(paid)) bits.push(`This tract typically pays $${paid.toLocaleString()} a month.`);
+      bits.push(`Pittsburgh typical is $${PGH_MEDIAN_GROSS_RENT.toLocaleString()}.`);
+      if (burden != null && Number.isFinite(burden)) bits.push(`${burden}% of nearby renters are cost-burdened.`);
+      if (!isUnknown(gap) && gap > 0) bits.push(`About $${gap.toLocaleString()} over a 30% income carry.`);
+      return {
+        display: !isUnknown(paid) ? `$${paid.toLocaleString()}` : `${burden}% burden`,
+        score,
+        scope: "This census tract",
+        note: bits.join(" "),
+      };
+    }
+    return {
+      display: `$${PGH_MEDIAN_GROSS_RENT.toLocaleString()}`,
+      score: UNKNOWN,
+      scope: "Pittsburgh city, not this tract",
+      note: "No ACS rent for this tract. Use the city typical ($1,261) as the market floor until you pull a local comp.",
+    };
+  })();
+
+  const economic = (() => {
+    if (!isUnknown(incomeRaw)) {
+      const inc = Number(String(incomeRaw).replace(/,/g, ""));
+      if (Number.isFinite(inc) && inc > 0) {
+        const score = Math.round(clamp((inc / PGH_MEDIAN_INCOME) * 100) * 10) / 10;
+        const carry = isUnknown(pred) ? "" : ` Carry at 30% is about $${pred.toLocaleString()} a month.`;
+        return {
+          display: `$${Math.round(inc).toLocaleString()}`,
+          score,
+          scope: "This census tract",
+          note: `Typical household income versus Pittsburgh $${PGH_MEDIAN_INCOME.toLocaleString()}.${carry}`,
+        };
+      }
+    }
+    return {
+      display: `$${PGH_MEDIAN_INCOME.toLocaleString()}`,
+      score: UNKNOWN,
+      scope: "Pittsburgh city, not this tract",
+      note: "No ACS income for this tract. City typical household income is the benchmark, not a household on this vacant lot.",
+    };
+  })();
+
+  const mobility = (() => {
+    if (!isUnknown(distRaw)) {
+      const dist = Number(distRaw);
+      if (Number.isFinite(dist)) {
+        const score = Math.round(clamp(100 - linear(dist, 400, 2640)) * 10) / 10;
+        return {
+          display: `${Math.round(dist)} ft`,
+          score,
+          scope: "This lot",
+          note: "Feet to a Port Authority stop. Transit access, not jobs or schools.",
+        };
+      }
+    }
+    const lat = Number(site.latitude);
+    const lon = Number(site.longitude);
+    const pin = Number.isFinite(lat) && Number.isFinite(lon) ? `${lat.toFixed(4)}, ${lon.toFixed(4)}` : "Open Maps from this lot";
+    return {
+      display: "Maps",
+      score: UNKNOWN,
+      scope: "This lot",
+      note: `No bus distance in this file. Pin ${pin}. Confirm a stop on Maps before you treat this as transit-oriented.`,
+    };
+  })();
+
+  return [
+    {
+      id: "site",
+      name: "What you can build",
+      enterprise: "Lot and zoning, always on file.",
+      display: `${allowed.length} of 3`,
+      score: buildScore,
+      scope: "This lot",
+      note: `${Number.isFinite(sq) ? `${sq.toLocaleString()} square feet. ` : ""}${typeBits.join(" ")}`,
+    },
+    {
+      id: "housing",
+      name: "Housing cost",
+      enterprise: "Opportunity360 housing stability, as rent.",
+      ...housing,
+    },
+    {
+      id: "economic",
+      name: "Income",
+      enterprise: "Opportunity360 economic security.",
+      ...economic,
+    },
+    {
+      id: "mobility",
+      name: "Getting there",
+      enterprise: "Opportunity360 mobility.",
+      ...mobility,
+    },
+  ];
 }
