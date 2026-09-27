@@ -9,9 +9,8 @@ import pandas as pd
 
 UNKNOWN = "unknown"
 
-TYPOLOGIES = ("adu", "duplex", "small_multifamily")
+TYPOLOGIES = ("duplex", "small_multifamily")
 TYPOLOGY_LABELS = {
-    "adu": "ADU",
     "duplex": "Duplex",
     "small_multifamily": "Small multifamily",
 }
@@ -23,14 +22,13 @@ FACTOR_LABELS = {
     "climate_proxy": "Climate (proxy)",
 }
 ZONING_FIELDS = {
-    "adu": "zoning_allows_adu",
     "duplex": "zoning_allows_duplex",
     "small_multifamily": "zoning_allows_small_multifamily",
 }
 
 # Lot-size targets in sq ft. These are scoring heuristics, not code minimums.
-LOT_FULL_SCORE = {"adu": 1800, "duplex": 2800, "small_multifamily": 5000}
-LOT_MIN_SCORE = {"adu": 800, "duplex": 1200, "small_multifamily": 1800}
+LOT_FULL_SCORE = {"duplex": 2800, "small_multifamily": 5000}
+LOT_MIN_SCORE = {"duplex": 1200, "small_multifamily": 1800}
 
 
 def is_unknown(value: Any) -> bool:
@@ -160,7 +158,7 @@ def demand_fit(row: Mapping[str, Any], typology: str) -> dict[str, Any]:
             "source": "tract_renter_share",
             "detail": "Insufficient data for demand fit",
         }
-    bump = {"adu": 0.9, "duplex": 1.0, "small_multifamily": 1.05}[typology]
+    bump = {"duplex": 1.0, "small_multifamily": 1.05}[typology]
     return {
         "status": "from_data",
         "score": round(_clamp(float(share) * bump), 1),
@@ -182,7 +180,7 @@ def affordability_impact(row: Mapping[str, Any], typology: str) -> dict[str, Any
             "source": "tract_rent_burden_pct",
             "detail": "Insufficient data for affordability impact",
         }
-    bump = {"adu": 0.85, "duplex": 0.95, "small_multifamily": 1.0}[typology]
+    bump = {"duplex": 0.95, "small_multifamily": 1.0}[typology]
     return {
         "status": "from_data",
         "score": round(_clamp(float(burden) * bump), 1),
@@ -205,7 +203,7 @@ def climate_proxy(row: Mapping[str, Any], typology: str) -> dict[str, Any]:
             "detail": "Insufficient data for climate proxy",
         }
     access = 100.0 - _linear(float(dist), 400.0, 2640.0)
-    density = {"adu": 0.0, "duplex": 8.0, "small_multifamily": 16.0}[typology]
+    density = {"duplex": 8.0, "small_multifamily": 16.0}[typology]
     return {
         "status": "from_data",
         "score": round(_clamp(access + density), 1),

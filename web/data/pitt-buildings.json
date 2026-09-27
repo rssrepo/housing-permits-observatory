@@ -1,0 +1,1 @@
+{"count": 2192, "stride": 5, "fields": ["lon", "lat", "dx_deg", "dy_deg", "height_m"], "source": "Pittsburgh_schematic.slpk (I3S 1.6 Building3dSchematic)", "extent": [-80.09203623202333, 40.35826960851506, -79.86396348651247, 40.50332713251498]}

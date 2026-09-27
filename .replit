@@ -1,12 +1,12 @@
-run = "streamlit run app.py --server.address 0.0.0.0 --server.port 8501"
+run = "python3 serve.py"
 modules = ["python-3.11"]
 
 [nix]
 channel = "stable-24_05"
 
 [deployment]
-run = ["sh", "-c", "streamlit run app.py --server.address 0.0.0.0 --server.port 8501"]
+run = ["sh", "-c", "python3 serve.py"]
 
 [[ports]]
-localPort = 8501
+localPort = 8080
 externalPort = 80

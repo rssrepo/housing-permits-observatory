@@ -1,3 +1,5 @@
+import { TYPOLOGIES } from "./scoring.js?v=cdc28";
+
 const KEY = "hpo_session_v2";
 
 export const DEMO = { email: "cdc@hillcdc.org", password: "pittsburgh", name: "Maya Chen", org: "Hill District CDC" };
@@ -19,7 +21,7 @@ export function signOut() {
 }
 
 export function defaultWeights() {
-  return { feasibility: 25, demand_fit: 25, affordability_impact: 25, climate_proxy: 25 };
+  return { feasibility: 20, demand_fit: 20, affordability_impact: 20, displacement_risk: 20, climate_proxy: 20 };
 }
 
 export function signIn({ email, password, name, org }) {
@@ -42,13 +44,39 @@ export function signIn({ email, password, name, org }) {
     lastSiteId: existing?.lastSiteId || "centre-2523",
     missionSet: existing?.missionSet || false,
     missionPlaces: existing?.missionPlaces || [],
-    missionType: existing?.missionType || "duplex",
-    missionTypes: existing?.missionTypes || (existing?.missionType === "any" ? ["adu", "duplex", "small_multifamily"] : [existing?.missionType || "duplex"]),
+    missionAllCity: existing?.missionAllCity || false,
+    missionType: existing?.missionType === "adu" ? "duplex" : existing?.missionType || "duplex",
+    missionTypes: (() => {
+      const t = (existing?.missionTypes ||
+        (existing?.missionType === "any" ? ["duplex", "small_multifamily"] : [existing?.missionType || "duplex"])
+      ).filter((x) => TYPOLOGIES.includes(x));
+      return t.length ? t : ["duplex"];
+    })(),
     missionForSale: existing?.missionForSale !== false,
     missionByRight: existing?.missionByRight !== false,
     lotVisits: existing?.lotVisits || [],
     extraWalks: existing?.extraWalks || [],
     visitsAsked: existing?.visitsAsked || false,
+    askTypes: (() => {
+      const t = (existing?.askTypes || existing?.missionTypes || ["duplex", "small_multifamily"]).filter(
+        (x) => TYPOLOGIES.includes(x)
+      );
+      return t.length ? t : ["duplex"];
+    })(),
+    askByRight: existing?.askByRight || (existing?.missionByRight === false ? "skip" : "prefer"),
+    askLand: existing?.askLand || [],
+    askCluster: existing?.askCluster || 0,
+    askWho: existing?.askWho || "skip",
+    askPressure: existing?.askPressure || "flag",
+    askFlood: existing?.askFlood || "warn",
+    askSlope: existing?.askSlope || "warn",
+    askBus: existing?.askBus ?? existing?.transitMaxFt ?? 0,
+    askTrees: existing?.askTrees || 0,
+    askHeat: existing?.askHeat || "warn",
+    askLihtc: existing?.askLihtc || "skip",
+    askAllCity: existing?.askAllCity ?? existing?.missionAllCity ?? false,
+    askPlaces: existing?.askPlaces || existing?.missionPlaces || [],
+    transitMaxFt: existing?.transitMaxFt || 0,
     createdAt: existing?.createdAt || new Date().toISOString(),
   };
   saveSession(session);
