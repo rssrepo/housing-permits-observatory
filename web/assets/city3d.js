@@ -1,16 +1,42 @@
 import * as THREE from "three";
+import {
+  FACTORS,
+  TYPOLOGIES,
+  TYPOLOGY_LABELS,
+  isUnknown,
+  normalizeWeights,
+  scoreSite,
+} from "./scoring.js?v=cdc26";
+import { primaryUse, useAllows } from "./uses.js?v=cdc26";
 
 const LAYERS = [
+  { id: "mix", lab: "Mix score" },
   { id: "visits", lab: "Your visits" },
   { id: "path", lab: "Whose land" },
   { id: "flood", lab: "Flood" },
+  { id: "heat", lab: "Surface heat" },
   { id: "slope", lab: "Hillside" },
-  { id: "build", lab: "By-right type" },
+  { id: "build", lab: "By-right homes" },
+  { id: "use", lab: "Land use" },
   { id: "shade", lab: "Street trees" },
   { id: "credit", lab: "LIHTC nearby" },
 ];
 
+const FACTOR_SHORT = {
+  feasibility: "Allowed",
+  demand_fit: "Renters",
+  affordability_impact: "Strain",
+  displacement_risk: "Overpay",
+  climate_proxy: "Bus",
+};
+
 const LEGEND = {
+  mix: [
+    { id: "high", hex: "#4c6fff", lab: "Stronger mix" },
+    { id: "mid", hex: "#8aa6ff", lab: "Middle" },
+    { id: "low", hex: "#c5d0dc", lab: "Weaker mix" },
+    { id: "unk", hex: "#e8e4dc", lab: "Too little data" },
+  ],
   visits: [
     { id: "visit", hex: "#4c6fff", lab: "On your visits list" },
     { id: "other", hex: "#1c2430", lab: "Other city vacant lots" },
@@ -26,6 +52,12 @@ const LEGEND = {
     { id: "sfha", hex: "#3db5c8", lab: "Special flood hazard (NFHL)" },
     { id: "ok", hex: "#c5d0dc", lab: "Not SFHA / not flagged" },
   ],
+  heat: [
+    { id: "hot", hex: "#e76f51", lab: "Hotter than city mean (4–5)" },
+    { id: "mid", hex: "#d69a30", lab: "Near the mean (3)" },
+    { id: "cool", hex: "#4c6fff", lab: "Cooler than city mean (1–2)" },
+    { id: "unk", hex: "#e8e4dc", lab: "No pixel" },
+  ],
   slope: [
     { id: "steep", hex: "#d69a30", lab: "Inside 25%+ slope polygons" },
     { id: "ok", hex: "#c5d0dc", lab: "Not in those polygons" },
@@ -40,8 +72,18 @@ const LEGEND = {
     { id: "more", hex: "#1d4a32", lab: "More street trees within 400 ft" },
     { id: "few", hex: "#d8e4d4", lab: "Fewer or none" },
   ],
+  use: [
+    { id: "affordable", hex: "#4e9470", lab: "Affordable in play" },
+    { id: "single_family", hex: "#4c6fff", lab: "Single-family" },
+    { id: "duplex", hex: "#7b6cc7", lab: "Two-family" },
+    { id: "small_multifamily", hex: "#2a9d8f", lab: "Small apartment" },
+    { id: "office", hex: "#d69a30", lab: "Offices" },
+    { id: "commercial", hex: "#e76f51", lab: "Commercial" },
+    { id: "industrial", hex: "#1c2430", lab: "Industrial" },
+    { id: "none", hex: "#c5d0dc", lab: "None of these / other district" },
+  ],
   credit: [
-    { id: "near", hex: "#d69a30", lab: "HUD LIHTC within a quarter mile" },
+    { id: "near", hex: "#d69a30", lab: "LIHTC within a quarter mile" },
     { id: "far", hex: "#c5d0dc", lab: "Farther or unmapped" },
   ],
 };
@@ -70,7 +112,8 @@ function shadeColor(site) {
   return new THREE.Color(0xd8e4d4).lerp(new THREE.Color(0x1d4a32), t).getHex();
 }
 
-function bucketFor(layer, site, visitIds) {
+function bucketFor(layer, site, visitIds, mixById, sub) {
+  if (layer === "mix") return (mixById.get(site.site_id) || {}).bucket || "unk";
   if (layer === "visits") return visitIds.has(site.site_id) ? "visit" : "other";
   if (layer === "path") {
     const inv = String(site.inventory_type || "");
@@ -81,6 +124,13 @@ function bucketFor(layer, site, visitIds) {
     return "other";
   }
   if (layer === "flood") return String(site.flood_sfha || "").toUpperCase() === "T" ? "sfha" : "ok";
+  if (layer === "heat") {
+    const h = Number(site.heat_severity);
+    if (!Number.isFinite(h)) return "unk";
+    if (h >= 4) return "hot";
+    if (h <= 2) return "cool";
+    return "mid";
+  }
   if (layer === "slope") return String(site.steep_slope || "").toLowerCase() === "yes" ? "steep" : "ok";
   if (layer === "build") {
     const d = String(site.zoning_allows_duplex || "") === "by_right";
@@ -90,6 +140,15 @@ function bucketFor(layer, site, visitIds) {
     if (m) return "mf";
     return "none";
   }
+  if (layer === "use") {
+    if (sub === "affordable") return useAllows(site, "affordable") === "by_right" ? "affordable" : "miss";
+    if (sub && sub !== "none") return useAllows(site, sub) === "by_right" ? sub : "miss";
+    if (sub === "none") {
+      const p = primaryUse(site);
+      return p === "none" || p === "unk" ? "none" : "miss";
+    }
+    return primaryUse(site);
+  }
   if (layer === "shade") return Number(site.trees_400ft) >= 8 ? "more" : "few";
   if (layer === "credit") {
     const ft = Number(site.lihtc_ft);
@@ -98,12 +157,49 @@ function bucketFor(layer, site, visitIds) {
   return "other";
 }
 
-function colorFor(layer, site, visitIds) {
+function mixHex(n) {
+  if (n == null || n < 0) return 0xe8e4dc;
+  const t = Math.max(0, Math.min(1, n / 100));
+  return new THREE.Color(0xc5d0dc).lerp(new THREE.Color(0x4c6fff), t).getHex();
+}
+
+function useHex(site) {
+  const id = primaryUse(site);
+  const hex = {
+    industrial: 0x1c2430,
+    commercial: 0xe76f51,
+    office: 0xd69a30,
+    small_multifamily: 0x2a9d8f,
+    duplex: 0x7b6cc7,
+    single_family: 0x4c6fff,
+    none: 0xc5d0dc,
+    unk: 0xe8e4dc,
+  };
+  return hex[id] || 0xc5d0dc;
+}
+
+function heatColor(site) {
+  const h = Number(site.heat_severity);
+  if (!Number.isFinite(h)) return 0xe8e4dc;
+  if (h >= 5) return 0xe76f51;
+  if (h >= 4) return 0xd69a30;
+  if (h >= 3) return 0xc5d0dc;
+  if (h >= 2) return 0x7aa0c8;
+  return 0x4c6fff;
+}
+
+function colorFor(layer, site, visitIds, mixById, sub) {
+  if (layer === "mix") return mixHex((mixById.get(site.site_id) || {}).n);
   if (layer === "visits") return visitIds.has(site.site_id) ? 0x4c6fff : 0x1c2430;
   if (layer === "path") return pathColor(site);
   if (layer === "flood") return String(site.flood_sfha || "").toUpperCase() === "T" ? 0x3db5c8 : 0xc5d0dc;
+  if (layer === "heat") return heatColor(site);
   if (layer === "slope") return String(site.steep_slope || "").toLowerCase() === "yes" ? 0xd69a30 : 0xc5d0dc;
   if (layer === "build") return buildColor(site);
+  if (layer === "use") {
+    if (sub === "affordable") return useAllows(site, "affordable") === "by_right" ? 0x4e9470 : 0xc5d0dc;
+    return useHex(site);
+  }
   if (layer === "shade") return shadeColor(site);
   if (layer === "credit") {
     const ft = Number(site.lihtc_ft);
@@ -141,11 +237,78 @@ function clusterScales(plotted, visits) {
   });
 }
 
+function scoreLots(lots, weights, types) {
+  const mixById = new Map();
+  const pool = types?.length ? types : TYPOLOGIES;
+  for (const site of lots) {
+    const result = scoreSite(site, weights);
+    let pick = null;
+    for (const t of pool) {
+      const block = result.typologies[t];
+      if (!block) continue;
+      const raw = useAllows(site, t);
+      const rank = raw === "by_right" ? 0 : raw === "not_allowed" ? 2 : 1;
+      const n = isUnknown(block.composite.score) ? -1 : Number(block.composite.score);
+      if (!pick || rank < pick.rank || (rank === pick.rank && n > pick.n)) {
+        pick = { t, n, rank };
+      }
+    }
+    const n = pick ? pick.n : -1;
+    const bucket = n < 0 ? "unk" : n >= 62 ? "high" : n >= 38 ? "mid" : "low";
+    mixById.set(site.site_id, { n, bucket, t: pick?.t });
+  }
+  return mixById;
+}
+
+function radarSvg(weights) {
+  const n = normalizeWeights(weights);
+  const cx = 54;
+  const cy = 56;
+  const r = 34;
+  const pts = FACTORS.map((k, i) => {
+    const a = -Math.PI / 2 + (i * 2 * Math.PI) / FACTORS.length;
+    const mag = 0.18 + 0.82 * (n[k] || 0);
+    return [cx + r * mag * Math.cos(a), cy + r * mag * Math.sin(a)];
+  });
+  const ring = FACTORS.map((_, i) => {
+    const a = -Math.PI / 2 + (i * 2 * Math.PI) / FACTORS.length;
+    return `${cx + r * Math.cos(a)},${cy + r * Math.sin(a)}`;
+  }).join(" ");
+  const labels = FACTORS.map((k, i) => {
+    const a = -Math.PI / 2 + (i * 2 * Math.PI) / FACTORS.length;
+    const x = cx + (r + 13) * Math.cos(a);
+    const y = cy + (r + 13) * Math.sin(a);
+    return `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" text-anchor="middle" dominant-baseline="middle">${FACTOR_SHORT[k]}</text>`;
+  }).join("");
+  return `<svg class="algo-radar" viewBox="0 0 108 112" aria-hidden="true">
+    <polygon class="algo-ring" points="${ring}" />
+    <polygon class="algo-fill" points="${pts.map((p) => p.map((x) => x.toFixed(1)).join(",")).join(" ")}" />
+    ${labels}
+  </svg>`;
+}
+
 export async function mountCity(
   host,
-  { lots = [], visitIds = [], focusId = null, onPick = null } = {}
+  {
+    lots = [],
+    visitIds = [],
+    focusId = null,
+    onPick = null,
+    weights = {},
+    types = [],
+    onWeights = null,
+    formatCompare = null,
+    onDossier = null,
+    onFullCompare = null,
+    rail = null,
+  } = {}
 ) {
   const visits = visitIds instanceof Set ? visitIds : new Set(visitIds);
+  let mixWeights = Object.fromEntries(FACTORS.map((k) => [k, Number(weights[k] ?? 20)]));
+  let mixTypes = (types || []).filter((t) => TYPOLOGIES.includes(t));
+  if (!mixTypes.length) mixTypes = [...TYPOLOGIES];
+  let mixById = new Map();
+
   const meta = await (await fetch("./data/pitt-height.json")).json();
   const buf = await (await fetch("./data/pitt-height.u16")).arrayBuffer();
   const u16 = new Uint16Array(buf);
@@ -153,20 +316,37 @@ export async function mountCity(
 
   host.innerHTML = "";
   host.style.position = "relative";
+  if (rail) rail.innerHTML = "";
+  const dock = rail || host;
   const hud = document.createElement("div");
   hud.className = "city-hud";
-  hud.innerHTML = `<div class="city-layers">${LAYERS.map(
-    (l, i) => `<button type="button" class="choice chip${i === 0 ? " on" : ""}" data-layer="${l.id}">${l.lab}</button>`
-  ).join("")}</div><div class="city-legend" id="city-legend"></div>`;
-  host.appendChild(hud);
+  hud.innerHTML = `<div class="city-pick">
+      <button type="button" class="choice chip on" data-mode="compare">Compare two</button>
+      <button type="button" class="choice chip" data-mode="open">Open this lot</button>
+    </div>
+    <div class="city-layers">${LAYERS.map(
+      (l, i) => `<button type="button" class="choice chip${i === 0 ? " on" : ""}" data-layer="${l.id}">${l.lab}</button>`
+    ).join("")}</div><div class="city-legend" id="city-legend"></div>`;
+  dock.appendChild(hud);
+  const algo = document.createElement("div");
+  algo.className = "city-algo";
+  dock.appendChild(algo);
+  const duel = document.createElement("div");
+  duel.className = "city-duel";
+  duel.hidden = true;
+  dock.appendChild(duel);
   const tip = document.createElement("div");
   tip.className = "city-tip";
   tip.id = "city-tip";
   tip.hidden = true;
   host.appendChild(tip);
   const legendEl = hud.querySelector("#city-legend");
-  let layer = "visits";
+  let layer = "mix";
   let sub = "";
+  let clickMode = "compare";
+  let pickA = null;
+  let pickB = null;
+  let dragMoved = false;
 
   function paintLegend() {
     legendEl.innerHTML = (LEGEND[layer] || [])
@@ -183,6 +363,92 @@ export async function mountCity(
         paintLegend();
       };
     });
+  }
+
+  let mixTimer = 0;
+  function pushMix() {
+    layer = "mix";
+    sub = "";
+    hud.querySelectorAll("[data-layer]").forEach((b) => b.classList.toggle("on", b.dataset.layer === "mix"));
+    const n = normalizeWeights(mixWeights);
+    const radar = algo.querySelector(".algo-radar");
+    if (radar) radar.outerHTML = radarSvg(mixWeights);
+    algo.querySelectorAll("[data-wk]").forEach((input) => {
+      const b = input.parentElement.querySelector("b");
+      if (b) b.textContent = `${Math.round((n[input.dataset.wk] || 0) * 100)}%`;
+    });
+    clearTimeout(mixTimer);
+    mixTimer = setTimeout(() => {
+      mixById = scoreLots(plotted, mixWeights, mixTypes);
+      applyView();
+      paintLegend();
+      if (onWeights) onWeights({ ...mixWeights }, [...mixTypes]);
+    }, 50);
+  }
+
+  function paintAlgo() {
+    const n = normalizeWeights(mixWeights);
+    const rows = FACTORS.map(
+      (k) => `<label class="algo-row">${FACTOR_SHORT[k]}
+        <input type="range" min="0" max="100" step="5" data-wk="${k}" value="${Math.round(mixWeights[k] || 0)}" />
+        <b>${Math.round((n[k] || 0) * 100)}%</b>
+      </label>`
+    ).join("");
+    const typeBtns = TYPOLOGIES.map(
+      (t) =>
+        `<button type="button" class="choice chip${mixTypes.includes(t) ? " on" : ""}" data-type="${t}">${TYPOLOGY_LABELS[t]}</button>`
+    ).join("");
+    algo.innerHTML = `<p class="eyebrow">Typology mix</p>
+      <div class="algo-split">
+        ${radarSvg(mixWeights)}
+        <div class="algo-sliders">${rows}</div>
+      </div>
+      <p class="algo-types">${typeBtns}</p>`;
+    algo.querySelectorAll("[data-wk]").forEach((input) => {
+      input.oninput = () => {
+        mixWeights[input.dataset.wk] = Number(input.value);
+        pushMix();
+      };
+    });
+    algo.querySelectorAll("[data-type]").forEach((btn) => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        const t = btn.dataset.type;
+        if (mixTypes.includes(t) && mixTypes.length === 1) return;
+        mixTypes = mixTypes.includes(t) ? mixTypes.filter((x) => x !== t) : [...mixTypes, t];
+        layer = "mix";
+        sub = "";
+        hud.querySelectorAll("[data-layer]").forEach((b) => b.classList.toggle("on", b.dataset.layer === "mix"));
+        mixById = scoreLots(plotted, mixWeights, mixTypes);
+        paintAlgo();
+        applyView();
+        paintLegend();
+        if (onWeights) onWeights({ ...mixWeights }, [...mixTypes]);
+      };
+    });
+  }
+
+  function paintDuel() {
+    host.classList.toggle("has-duel", clickMode === "compare" && Boolean(pickA));
+    if (clickMode !== "compare" || !pickA) {
+      duel.hidden = true;
+      duel.innerHTML = "";
+      placePins();
+      return;
+    }
+    duel.hidden = false;
+    if (!pickB) {
+      duel.innerHTML = `<p class="eyebrow">First lot</p>
+        <p class="duel-addr">${pickA.address || pickA.site_id}</p>
+        <p class="algo-note">${pickA.neighborhood_name || ""} · click a second peg</p>
+        <div class="cta-row"><button type="button" class="pill ghost" data-clear>Clear</button></div>`;
+    } else if (formatCompare) {
+      duel.innerHTML = formatCompare(pickA, pickB);
+    } else {
+      duel.innerHTML = `<p class="duel-addr">${pickA.address} vs ${pickB.address}</p>
+        <div class="cta-row"><button type="button" class="pill ghost" data-clear>Clear</button></div>`;
+    }
+    placePins();
   }
 
   const scene = new THREE.Scene();
@@ -263,7 +529,8 @@ export async function mountCity(
   }
 
   const plotted = lots.filter((s) => Number.isFinite(Number(s.latitude)) && Number.isFinite(Number(s.longitude)));
-  const pegGeo = new THREE.CylinderGeometry(0.22, 0.22, 1, 8);
+  mixById = scoreLots(plotted, mixWeights, mixTypes);
+  const pegGeo = new THREE.CylinderGeometry(0.42, 0.42, 1, 8);
   const pegMat = new THREE.MeshLambertMaterial();
   const pegs = new THREE.InstancedMesh(pegGeo, pegMat, plotted.length);
   pegs.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -272,7 +539,7 @@ export async function mountCity(
   const hidden = new Uint8Array(plotted.length);
   function applyView() {
     plotted.forEach((site, i) => {
-      const show = !sub || bucketFor(layer, site, visits) === sub;
+      const show = !sub || bucketFor(layer, site, visits, mixById, sub) === sub;
       hidden[i] = show ? 0 : 1;
       const p = lonLatToLocal(Number(site.longitude), Number(site.latitude), 0.2);
       const h = 1.1 * scales[i];
@@ -280,14 +547,14 @@ export async function mountCity(
       dummy.scale.set(show ? scales[i] : 0.001, show ? h : 0.001, show ? scales[i] : 0.001);
       dummy.updateMatrix();
       pegs.setMatrixAt(i, dummy.matrix);
-      pegColor.setHex(colorFor(layer, site, visits));
+      pegColor.setHex(colorFor(layer, site, visits, mixById, sub));
       pegs.setColorAt(i, pegColor);
     });
     pegs.instanceMatrix.needsUpdate = true;
     if (pegs.instanceColor) pegs.instanceColor.needsUpdate = true;
     discs.visible = layer === "flood" && floodIdx.length > 0 && (!sub || sub === "sfha");
     if (focusMesh && focusSite) {
-      focusMesh.visible = !sub || bucketFor(layer, focusSite, visits) === sub;
+      focusMesh.visible = !sub || bucketFor(layer, focusSite, visits, mixById, sub) === sub;
     }
   }
   scene.add(pegs);
@@ -329,14 +596,41 @@ export async function mountCity(
     focusBaseY = p.y;
     scene.add(focusMesh);
   }
+  const pinGeo = new THREE.ConeGeometry(0.78, 3.6, 10);
+  const pinA = new THREE.Mesh(pinGeo, new THREE.MeshBasicMaterial({ color: 0x4c6fff }));
+  const pinB = new THREE.Mesh(pinGeo.clone(), new THREE.MeshBasicMaterial({ color: 0xe76f51 }));
+  pinA.visible = false;
+  pinB.visible = false;
+  scene.add(pinA, pinB);
+  let pinABaseY = 0;
+  let pinBBaseY = 0;
+
+  function placePins() {
+    const put = (mesh, site, storeY) => {
+      if (!site) {
+        mesh.visible = false;
+        return 0;
+      }
+      const p = lonLatToLocal(Number(site.longitude), Number(site.latitude), 2.5);
+      mesh.position.copy(p);
+      mesh.visible = true;
+      return p.y;
+    };
+    pinABaseY = put(pinA, pickA);
+    pinBBaseY = put(pinB, pickB);
+    if (focusMesh) focusMesh.visible = !(pickA || pickB);
+  }
   applyView();
   paintLegend();
+  paintAlgo();
 
   const ray = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
   let dragging = false;
   let lastX = 0;
   let lastY = 0;
+  let downX = 0;
+  let downY = 0;
   let theta = 0.7;
   let phi = 0.85;
   let radius = 118;
@@ -378,12 +672,44 @@ export async function mountCity(
       paintLegend();
     };
   });
+  hud.querySelectorAll("[data-mode]").forEach((btn) => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      clickMode = btn.dataset.mode;
+      hud.querySelectorAll("[data-mode]").forEach((b) => b.classList.toggle("on", b === btn));
+      if (clickMode !== "compare") {
+        pickA = null;
+        pickB = null;
+      }
+      paintDuel();
+    };
+  });
+  duel.onclick = (e) => {
+    e.stopPropagation();
+    if (e.target.closest("[data-clear]")) {
+      pickA = null;
+      pickB = null;
+      paintDuel();
+      return;
+    }
+    const dossier = e.target.closest("[data-dossier]");
+    if (dossier && onDossier) onDossier(dossier.dataset.dossier);
+    const full = e.target.closest("[data-full]");
+    if (full && pickA && pickB && onFullCompare) onFullCompare(pickA.site_id, pickB.site_id);
+  };
 
   function hitLot(e) {
     const rect = renderer.domElement.getBoundingClientRect();
     pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
     pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
     ray.setFromCamera(pointer, camera);
+    const flags = [pinA, pinB, focusMesh].filter((m) => m && m.visible);
+    const pinHit = flags.length ? ray.intersectObjects(flags)[0] : null;
+    if (pinHit) {
+      if (pinHit.object === pinA && pickA) return pickA;
+      if (pinHit.object === pinB && pickB) return pickB;
+      if (pinHit.object === focusMesh && focusSite) return focusSite;
+    }
     const hit = ray.intersectObject(pegs)[0];
     if (!hit || hit.instanceId == null) return null;
     if (hidden[hit.instanceId]) return null;
@@ -391,13 +717,17 @@ export async function mountCity(
   }
 
   function onDown(e) {
-    if (e.target.closest(".city-hud button")) return;
+    if (e.target.closest(".city-hud, .city-algo, .city-duel")) return;
     dragging = true;
+    dragMoved = false;
     lastX = e.clientX;
     lastY = e.clientY;
+    downX = e.clientX;
+    downY = e.clientY;
   }
   function onMove(e) {
     if (dragging) {
+      if (Math.abs(e.clientX - lastX) + Math.abs(e.clientY - lastY) > 14) dragMoved = true;
       theta -= (e.clientX - lastX) * 0.008;
       phi = Math.max(0.15, Math.min(1.35, phi - (e.clientY - lastY) * 0.008));
       lastX = e.clientX;
@@ -417,10 +747,43 @@ export async function mountCity(
     tip.style.left = `${e.clientX - rect.left + 12}px`;
     tip.style.top = `${e.clientY - rect.top + 12}px`;
     const bits = [site.address, site.neighborhood_name, site.inventory_type].filter(Boolean);
+    const mix = mixById.get(site.site_id);
+    if (layer === "mix" && mix) {
+      bits.push(mix.n < 0 ? "mix unknown" : `mix ${Math.round(mix.n)}${mix.t ? ` · ${TYPOLOGY_LABELS[mix.t] || mix.t}` : ""}`);
+    }
+    if (clickMode === "compare") {
+      bits.push(!pickA ? "click for lot A" : !pickB || pickA.site_id === site.site_id ? "click for lot B" : "click to start a new pair");
+    }
     tip.textContent = bits.join(" · ");
   }
-  function onUp() {
+  function applyPick(site) {
+    if (!site) return;
+    if (clickMode === "compare") {
+      if (!pickA) {
+        pickA = site;
+        pickB = null;
+      } else if (!pickB && site.site_id !== pickA.site_id) {
+        pickB = site;
+      } else if (pickB && site.site_id === pickA.site_id) {
+        pickB = null;
+      } else if (pickB && site.site_id === pickB.site_id) {
+        return;
+      } else {
+        pickA = site;
+        pickB = null;
+      }
+      paintDuel();
+      return;
+    }
+    if (onPick) onPick(site.site_id);
+  }
+  function onUp(e) {
+    const was = dragging;
     dragging = false;
+    if (!was) return;
+    if (Math.hypot(e.clientX - downX, e.clientY - downY) > 18) return;
+    if (e.target.closest?.(".city-hud, .city-algo, .city-duel")) return;
+    applyPick(hitLot(e));
   }
   function onWheel(e) {
     e.preventDefault();
@@ -428,9 +791,7 @@ export async function mountCity(
     placeCam();
   }
   function onClick(e) {
-    if (e.target.closest(".city-hud button")) return;
-    const site = hitLot(e);
-    if (site && onPick) onPick(site.site_id);
+    if (e.target.closest(".city-hud, .city-algo, .city-duel")) return;
   }
 
   renderer.domElement.addEventListener("pointerdown", onDown);
@@ -446,6 +807,8 @@ export async function mountCity(
     if (focusMesh) {
       focusMesh.position.y = focusBaseY + Math.sin((now - t0) / 420) * 0.35;
     }
+    if (pinA.visible) pinA.position.y = pinABaseY + Math.sin((now - t0) / 380) * 0.32;
+    if (pinB.visible) pinB.position.y = pinBBaseY + Math.sin((now - t0) / 340) * 0.32;
     if (discs.visible && floodIdx.length) {
       const pulse = 1.4 + Math.sin((now - t0) / 380) * 0.25;
       floodIdx.forEach((idx, i) => {
@@ -463,6 +826,7 @@ export async function mountCity(
   tick(t0);
 
   return () => {
+    clearTimeout(mixTimer);
     cancelAnimationFrame(raf);
     ro.disconnect();
     renderer.domElement.removeEventListener("pointerdown", onDown);
@@ -486,6 +850,11 @@ export async function mountCity(
       focusMesh.geometry.dispose();
       focusMesh.material.dispose();
     }
+    pinGeo.dispose();
+    pinA.material.dispose();
+    pinB.geometry.dispose();
+    pinB.material.dispose();
     host.innerHTML = "";
+    if (rail) rail.innerHTML = "";
   };
 }

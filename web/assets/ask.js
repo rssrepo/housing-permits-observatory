@@ -1,11 +1,11 @@
-import { TYPOLOGY_LABELS, displacementGapUsd, isUnknown, predictedRentUsd, PGH_MEDIAN_GROSS_RENT, readField } from "./scoring.js?v=cdc13";
+import { TYPOLOGY_LABELS, displacementGapUsd, isUnknown, predictedRentUsd, PGH_MEDIAN_GROSS_RENT, readField } from "./scoring.js?v=cdc26";
 import {
   currentWalks,
   deckPairings,
   mapsUrl,
   walkLine,
   featuredPairing,
-} from "./match.js?v=cdc13";
+} from "./match.js?v=cdc15";
 
 let pendingPlan = null;
 
@@ -16,6 +16,7 @@ export const ASK_PROMPTS = [
   "What is the PIN?",
   "Is this Land Bank land?",
   "What is typical rent nearby?",
+  "Compare two types on this lot",
 ];
 
 function esc(s) {
@@ -182,6 +183,11 @@ function typeFromQuery(q) {
   if (/\badu\b|accessory/.test(q)) return "dropped_adu";
   if (/apartment|multifamily|small apartment/.test(q)) return "small_multifamily";
   if (/duplex|two-family|two family/.test(q)) return "duplex";
+  if (/single.family|single family/.test(q)) return "single_family";
+  if (/affordable/.test(q)) return "affordable";
+  if (/office/.test(q)) return "office";
+  if (/commercial|storefront|retail/.test(q)) return "commercial";
+  if (/industrial|workshop/.test(q)) return "industrial";
   return null;
 }
 
@@ -380,7 +386,7 @@ export function answerQuery(raw, { sites, session, filters }) {
 
   if (/opportunit|scorecard|enterprise|360/.test(q)) {
     return card({
-      title: "Open the visit dossier (CDC screen).",
+      title: "Open this lot on CDC screen.",
       note: "Tags, strengths vs watch-outs, then the five CDC filters. Ranking is in MATCHING.md.",
     });
   }
@@ -460,15 +466,15 @@ export function answerQuery(raw, { sites, session, filters }) {
     return card({ title: "Slope was not joined on this lot.", note: "I will not guess it." });
   }
 
-  if (/climate|carbon|flood|tree/.test(q)) {
+  if (/climate|carbon|flood|tree|heat/.test(q)) {
     return card({
-      title: "Climate on the pairing is flood, street trees, and bus distance.",
-      note: "Building operational carbon is not measured. Open the visit dossier for those tags.",
+      title: "Climate here is flood, TPL surface heat, street trees, and bus distance.",
+      note: "Heat is land surface versus the city mean, not air temperature. Building operational carbon is not measured.",
     });
   }
 
   if (/compare/.test(q)) {
-    return card({ title: "Open Compare and pick two lots.", note: "It names which one to walk for the type you are deciding." });
+    return card({ title: "Open Compare for two types on this lot.", note: "Same place, two housing scenarios, then move the mix sliders. Two lots is the other tab." });
   }
 
   if (top) {

@@ -1,9 +1,34 @@
+import { useAllows } from "./zone.js?v=cdc26";
+
 export const UNKNOWN = "unknown";
-export const TYPOLOGIES = ["duplex", "small_multifamily"];
+export const TYPOLOGIES = [
+  "duplex",
+  "small_multifamily",
+  "single_family",
+  "affordable",
+  "office",
+  "commercial",
+  "industrial",
+];
 export const TYPOLOGY_LABELS = {
   duplex: "Two-family house",
   small_multifamily: "Small apartment building",
+  single_family: "Single-family house",
+  affordable: "Affordable housing",
+  office: "Offices",
+  commercial: "Commercial",
+  industrial: "Industrial",
 };
+export const TYPOLOGY_HINTS = {
+  duplex: "A house split into two homes.",
+  small_multifamily: "About three to six homes on one city lot.",
+  single_family: "One house on the lot.",
+  affordable: "A home already allowed in a tract below Pittsburgh typical income. Not a tax-credit award.",
+  office: "Workspace. Mix uses district, lot, and bus. Not a rent score.",
+  commercial: "Storefront or commercial space. Mix uses district, lot, and bus.",
+  industrial: "Industrial or workshop space. Mix uses district, lot, and bus.",
+};
+export const HOUSING_TYPES = ["duplex", "small_multifamily", "single_family", "affordable"];
 export const FACTORS = ["feasibility", "demand_fit", "affordability_impact", "displacement_risk", "climate_proxy"];
 export const FACTOR_LABELS = {
   feasibility: "Allowed to build, lot is big enough",
@@ -23,8 +48,24 @@ const ZONING_FIELDS = {
   duplex: "zoning_allows_duplex",
   small_multifamily: "zoning_allows_small_multifamily",
 };
-const LOT_FULL = { duplex: 2800, small_multifamily: 5000 };
-const LOT_MIN = { duplex: 1200, small_multifamily: 1800 };
+const LOT_FULL = {
+  duplex: 2800,
+  small_multifamily: 5000,
+  single_family: 2500,
+  affordable: 2800,
+  office: 4000,
+  commercial: 4000,
+  industrial: 8000,
+};
+const LOT_MIN = {
+  duplex: 1200,
+  small_multifamily: 1800,
+  single_family: 1200,
+  affordable: 1200,
+  office: 1500,
+  commercial: 1500,
+  industrial: 3000,
+};
 
 export function isUnknown(v) {
   return v === UNKNOWN;
@@ -80,13 +121,13 @@ function scoreLot(typology, sqFt) {
 }
 
 function feasibility(row, typology) {
-  const zoning = parseZoning(row, ZONING_FIELDS[typology]);
+  const zoning = useAllows(row, typology);
   const lot = parseFloatField(row, "parc_sq_ft");
   const slope = readField(row, "steep_slope");
-  const sources = [ZONING_FIELDS[typology], "parc_sq_ft"];
+  const sources = [ZONING_FIELDS[typology] || "zoned_as", "parc_sq_ft"];
   if (isUnknown(zoning) || isUnknown(lot)) {
     const missing = [];
-    if (isUnknown(zoning)) missing.push(ZONING_FIELDS[typology]);
+    if (isUnknown(zoning)) missing.push(ZONING_FIELDS[typology] || "zoned_as");
     if (isUnknown(lot)) missing.push("parc_sq_ft");
     return { status: UNKNOWN, score: UNKNOWN, source: missing.join(", "), detail: "Insufficient data" };
   }
@@ -105,11 +146,14 @@ function feasibility(row, typology) {
 }
 
 function demandFit(row, typology) {
+  if (!HOUSING_TYPES.includes(typology)) {
+    return { status: UNKNOWN, score: UNKNOWN, source: "not used for this type", detail: "Workplace types do not use renter share" };
+  }
   const share = parseFloatField(row, "tract_renter_share");
   if (isUnknown(share)) {
     return { status: UNKNOWN, score: UNKNOWN, source: "tract_renter_share", detail: "Insufficient data" };
   }
-  const bump = { duplex: 1.0, small_multifamily: 1.05 }[typology];
+  const bump = { duplex: 1.0, small_multifamily: 1.05, single_family: 0.9, affordable: 1.0 }[typology] ?? 1;
   return {
     status: "from_data",
     score: Math.round(clamp(share * bump) * 10) / 10,
@@ -119,11 +163,14 @@ function demandFit(row, typology) {
 }
 
 function affordability(row, typology) {
+  if (!HOUSING_TYPES.includes(typology)) {
+    return { status: UNKNOWN, score: UNKNOWN, source: "not used for this type", detail: "Workplace types do not use rent burden" };
+  }
   const burden = parseFloatField(row, "tract_rent_burden_pct");
   if (isUnknown(burden)) {
     return { status: UNKNOWN, score: UNKNOWN, source: "tract_rent_burden_pct", detail: "Insufficient data" };
   }
-  const bump = { duplex: 0.95, small_multifamily: 1.0 }[typology];
+  const bump = { duplex: 0.95, small_multifamily: 1.0, single_family: 0.9, affordable: 1.05 }[typology] ?? 1;
   return {
     status: "from_data",
     score: Math.round(clamp(burden * bump) * 10) / 10,
@@ -133,6 +180,9 @@ function affordability(row, typology) {
 }
 
 function displacement(row, typology) {
+  if (!HOUSING_TYPES.includes(typology)) {
+    return { status: UNKNOWN, score: UNKNOWN, source: "not used for this type", detail: "Workplace types do not use overpay" };
+  }
   const burden = parseFloatField(row, "tract_rent_burden_pct");
   const paid = typicalRentUsd(row);
   const pred = predictedRentUsd(row);
@@ -149,7 +199,7 @@ function displacement(row, typology) {
   }
   const overPct = clamp(((paid - pred) / pred) * 100);
   const burdenPart = isUnknown(burden) ? overPct : burden;
-  const bump = { duplex: 1.0, small_multifamily: 0.92 }[typology];
+  const bump = { duplex: 1.0, small_multifamily: 0.92, single_family: 1.05, affordable: 0.9 }[typology] ?? 1;
   return {
     status: "from_data",
     score: Math.round(clamp((0.55 * burdenPart + 0.45 * overPct) * bump) * 10) / 10,
@@ -164,7 +214,7 @@ function climate(row, typology) {
     return { status: UNKNOWN, score: UNKNOWN, source: "transit_distance_ft", detail: "Insufficient data" };
   }
   const access = 100 - linear(dist, 400, 2640);
-  const density = { duplex: 8, small_multifamily: 16 }[typology];
+  const density = { duplex: 8, small_multifamily: 16, single_family: 4, affordable: 10, office: 12, commercial: 10, industrial: 4 }[typology] ?? 0;
   return {
     status: "from_data",
     score: Math.round(clamp(access + density) * 10) / 10,
@@ -222,6 +272,46 @@ export function ranked(result) {
 }
 
 export const PGH_MEDIAN_GROSS_RENT = 1261;
+export const PGH_MEDIAN_HOME_VALUE = 205800;
+export const HOME_2BR_USD = 261595;
+export const TYPE_UNITS = {
+  duplex: 2,
+  small_multifamily: 4,
+  single_family: 1,
+  affordable: 4,
+};
+
+export function usd(n) {
+  if (n == null || !Number.isFinite(Number(n))) return null;
+  return Math.round(Number(n));
+}
+
+export function typicalHomeValueUsd(row) {
+  const raw = readField(row, "tract_median_home_value");
+  if (isUnknown(raw)) return UNKNOWN;
+  const n = Number(String(raw).replace(/,/g, ""));
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : UNKNOWN;
+}
+
+export function landFmvUsd(row) {
+  const raw = readField(row, "assess_land_fmv");
+  if (isUnknown(raw)) return UNKNOWN;
+  const n = Number(String(raw).replace(/,/g, ""));
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : UNKNOWN;
+}
+
+export function buildAfford(row, typology) {
+  const land = landFmvUsd(row);
+  const home = typicalHomeValueUsd(row);
+  const units = TYPE_UNITS[typology] || 0;
+  const housing = HOUSING_TYPES.includes(typology);
+  const cost = housing ? HOME_2BR_USD * units : null;
+  const sale = housing && !isUnknown(home) ? home * units : null;
+  const landN = isUnknown(land) ? null : land;
+  let spread = null;
+  if (sale != null && cost != null && landN != null) spread = sale - (landN + cost);
+  return { land: landN, home: isUnknown(home) ? null : home, units, cost, sale, spread, housing };
+}
 
 export function typicalRentUsd(row) {
   const raw = readField(row, "tract_median_gross_rent");
@@ -271,17 +361,14 @@ export function opportunityOutcomes(site) {
   const gap = displacementGapUsd(site);
   const sq = Number(readField(site, "parc_sq_ft"));
 
-  const allowed = TYPOLOGIES.filter((t) => {
-    const raw = readField(site, `zoning_allows_${t}`);
-    return raw === "by_right";
-  });
+  const allowed = TYPOLOGIES.filter((t) => useAllows(site, t) === "by_right");
   const buildScore = Math.round((allowed.length / TYPOLOGIES.length) * 1000) / 10;
   const typeBits = TYPOLOGIES.map((t) => {
-    const raw = readField(site, `zoning_allows_${t}`);
+    const raw = useAllows(site, t);
     const lab = TYPOLOGY_LABELS[t];
-    if (raw === "by_right") return `${lab} is allowed without a hearing.`;
-    if (raw === "not_allowed") return `${lab} is not allowed.`;
-    return `${lab} zoning is not in this file.`;
+    if (raw === "by_right") return `${lab} is allowed without a hearing, or in play.`;
+    if (raw === "not_allowed") return `${lab} is not this district.`;
+    return `${lab} is not decided in this file.`;
   });
 
   const housing = (() => {

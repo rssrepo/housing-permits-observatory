@@ -1,3 +1,5 @@
+import { TYPOLOGIES } from "./scoring.js?v=cdc26";
+
 const KEY = "hpo_session_v2";
 
 export const DEMO = { email: "cdc@hillcdc.org", password: "pittsburgh", name: "Maya Chen", org: "Hill District CDC" };
@@ -47,7 +49,7 @@ export function signIn({ email, password, name, org }) {
     missionTypes: (() => {
       const t = (existing?.missionTypes ||
         (existing?.missionType === "any" ? ["duplex", "small_multifamily"] : [existing?.missionType || "duplex"])
-      ).filter((x) => x === "duplex" || x === "small_multifamily");
+      ).filter((x) => TYPOLOGIES.includes(x));
       return t.length ? t : ["duplex"];
     })(),
     missionForSale: existing?.missionForSale !== false,
@@ -57,7 +59,7 @@ export function signIn({ email, password, name, org }) {
     visitsAsked: existing?.visitsAsked || false,
     askTypes: (() => {
       const t = (existing?.askTypes || existing?.missionTypes || ["duplex", "small_multifamily"]).filter(
-        (x) => x === "duplex" || x === "small_multifamily"
+        (x) => TYPOLOGIES.includes(x)
       );
       return t.length ? t : ["duplex"];
     })(),
@@ -70,6 +72,7 @@ export function signIn({ email, password, name, org }) {
     askSlope: existing?.askSlope || "warn",
     askBus: existing?.askBus ?? existing?.transitMaxFt ?? 0,
     askTrees: existing?.askTrees || 0,
+    askHeat: existing?.askHeat || "warn",
     askLihtc: existing?.askLihtc || "skip",
     askAllCity: existing?.askAllCity ?? existing?.missionAllCity ?? false,
     askPlaces: existing?.askPlaces || existing?.missionPlaces || [],

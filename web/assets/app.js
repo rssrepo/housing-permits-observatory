@@ -1,20 +1,26 @@
-import { loadSession, saveSession, signIn, signOut, DEMO } from "./auth.js?v=cdc13";
-import { answerQuery, ASK_PROMPTS } from "./ask.js?v=cdc13";
+import { loadSession, saveSession, signIn, signOut, DEMO } from "./auth.js?v=cdc26";
+import { answerQuery, ASK_PROMPTS } from "./ask.js?v=cdc26";
 import {
+  FACTOR_LABELS,
   FACTORS,
+  HOUSING_TYPES,
   TYPOLOGIES,
+  TYPOLOGY_HINTS,
   TYPOLOGY_LABELS,
   isUnknown,
   ranked,
   readField,
   scoreSite,
   normalizeWeights,
-} from "./scoring.js?v=cdc13";
+} from "./scoring.js?v=cdc26";
 import {
   VERDICT_LABEL,
   buildPairing,
+  affordHtml,
   assemblyNote,
   compareInsight,
+  scenarioInsight,
+  splitLegendHtml,
   currentWalks,
   deckPairings,
   districtPlain,
@@ -25,6 +31,8 @@ import {
   pointsHtml,
   verdictFor,
   scorecardHtml,
+  steerCitywide,
+  steerHtml,
   scorecardTags,
   sortPairings,
   stampClusters,
@@ -32,7 +40,7 @@ import {
   typicalRentLine,
   walkActionsHtml,
   walkLine,
-} from "./match.js?v=cdc13";
+} from "./match.js?v=cdc26";
 import {
   ASK_N,
   SLIDES,
@@ -41,14 +49,15 @@ import {
   restoreAsk,
   snapshotAsk,
   syncMix,
-} from "./onboard.js?v=cdc13";
+} from "./onboard.js?v=cdc26";
 
 const root = document.getElementById("app");
 let SITES = [];
 
 const ROLE_LABELS = {
+  planner: "City, county, or state planning",
+  econdev: "Economic development",
   cdc: "CDC / nonprofit staff",
-  planner: "City or county planning",
   advocate: "Community advocate",
   journalist: "Reporter or researcher",
   other: "Others",
@@ -98,9 +107,10 @@ function layoutPublic(inner) {
 function layoutApp(session, inner, current) {
   const links = [
     ["/match", "Visits"],
+    ["/city", "City"],
+    ["/steer", "Steering"],
     ["/pipeline", "Find a lot"],
     ["/compare", "Compare"],
-    ["/city", "City"],
     ["/scorecard", "CDC screen"],
     ["/briefing", "Briefing room"],
     ["/account", "Account"],
@@ -265,9 +275,9 @@ function enterDemo() {
 function viewLanding() {
   root.innerHTML = layoutPublic(`
     <section class="hero">
-      <span class="eyebrow">Housing type, equity, climate matchmaker</span>
-      <h1>What housing fits this vacant lot, and what do you give up if you pick it?</h1>
-      <p class="lede">Demand, transit, equity, and climate pull different ways. Parcel Fit matches a Pittsburgh city-owned lot to a housing type, then names who benefits, who might be harmed, and what this file cannot answer. There is no single right pairing.</p>
+      <span class="eyebrow">Public land, zoning, and the few tools a city actually holds</span>
+      <h1>Local government barely builds housing. It steers where private money goes.</h1>
+      <p class="lede">The steering wheel is zoning and land use, tax incentives, and public land. Parcel Fit reads those three on Pittsburgh city-owned vacant lots, then names the housing type tradeoff. Private parcels and most local tax deals are not in this file.</p>
       <div class="cta-row">
         <a class="pill" href="#/demo">Start as Hill District demo</a>
         <a class="pill ghost" href="#/login">Create a workspace</a>
@@ -288,8 +298,8 @@ function viewLanding() {
     <section class="section">
       <h2>Who this is for</h2>
       <div class="grid3">
+        <article class="card"><h3>Planning and economic development</h3><p class="muted">See how this vacant inventory sits against zoning, nearby tax-credit housing, and the public land path. Not a log of every TIF.</p></article>
         <article class="card"><h3>CDC staff</h3><p class="muted">Public vacant lots, title pathway, clusters, then a type you can walk this week.</p></article>
-        <article class="card"><h3>City partners</h3><p class="muted">By-right reading vs a variance fight. Compare two lots and see the tradeoff.</p></article>
         <article class="card"><h3>Neighbors at the table</h3><p class="muted">Who benefits and who might be harmed, in sentences, not a composite that hides the conflict.</p></article>
       </div>
     </section>
@@ -652,6 +662,7 @@ function readFilters() {
     skipSteep: s.askSlope === "skip",
     transitMaxFt: Number(s.askBus || s.transitMaxFt || 0),
     minTrees: Number(s.askTrees) >= 2 ? 8 : 0,
+    skipHot: s.askHeat === "skip",
     lihtc: s.askLihtc === "near" || s.askLihtc === "avoid" ? s.askLihtc : "",
     minCluster: Number(s.askCluster) >= 2 ? 1 : 0,
     minRenter: s.askWho === "renters" ? 45 : 0,
@@ -697,16 +708,11 @@ function viewMission(session) {
     </article>
     <article class="card" style="margin-top:1rem">
       <h3>What do you want to put on the ground?</h3>
-      <p class="muted">Select every type you would actually try. A pairing is one type on one lot.</p>
-      ${[
-        ["duplex", "Two-family house", "A house split into two homes."],
-        ["small_multifamily", "Small apartment building", "About three to six homes on one city lot."],
-      ]
-        .map(
-          ([v, lab, sub]) =>
-            `<button type="button" class="choice ${pickedTypes.has(v) ? "on" : ""}" data-type="${v}"><strong>${lab}</strong><span class="muted"> ${sub}</span></button>`
-        )
-        .join("")}
+      <p class="muted">Homes and workplaces. A pairing is one type on one lot. Office, commercial, and industrial mix use district, lot, and bus, not rent.</p>
+      ${TYPOLOGIES.map(
+        (v) =>
+          `<button type="button" class="choice ${pickedTypes.has(v) ? "on" : ""}" data-type="${v}"><strong>${TYPOLOGY_LABELS[v]}</strong><span class="muted"> ${TYPOLOGY_HINTS[v]}</span></button>`
+      ).join("")}
     </article>
     <article class="card" style="margin-top:1rem">
       <label class="choice"><input type="checkbox" id="sale" ${session.missionForSale === false ? "" : "checked"} /> Only lots listed as available for sale</label>
@@ -782,7 +788,7 @@ function viewMission(session) {
     }
     const typesNow = [...pickedTypes];
     if (!typesNow.length) {
-      document.getElementById("merr").textContent = "Pick at least one housing type.";
+      document.getElementById("merr").textContent = "Pick at least one type.";
       return;
     }
     const typeNow = typesNow.length === 1 ? typesNow[0] : "any";
@@ -1042,6 +1048,7 @@ function viewMatch(session) {
         <span class="verdict ${featured.verdict}">${VERDICT_LABEL[featured.verdict]}</span>
         <span class="small">#${Math.max(idx, 0) + 1} of ${visible.length}</span>
       </div>
+      ${affordHtml(featured.site, featured.typology)}
       <h2 class="serif pairing-title">${walkLine(featured.site, featured.typology, featured.verdict)}</h2>
       <p class="muted">${factsStrip(featured.site)}</p>
       <p class="small">${assemblyNote(featured.site, SITES)}</p>
@@ -1074,6 +1081,7 @@ function viewMatch(session) {
                 <span class="verdict ${p.verdict}">${VERDICT_LABEL[p.verdict]}</span>
                 <span class="small">${i + 1}</span>
               </div>
+              ${affordHtml(p.site, p.typology)}
               <h3>${walkLine(p.site, p.typology, p.verdict)}</h3>
               <p class="muted">${factsStrip(p.site)}</p>
               ${walkActionsHtml(p.site)}
@@ -1312,56 +1320,143 @@ function viewSite(session, id) {
   bindCopyPins();
 }
 
+function compareTypeOf(session) {
+  const filters = readFilters();
+  if (filters.typology && (filters.typology === "any" || TYPOLOGIES.includes(filters.typology))) {
+    return filters.typology;
+  }
+  return missionTypesOf(session).length === 1 ? missionTypesOf(session)[0] : "any";
+}
+
+function mapCompareHtml(left, right, session) {
+  const ins = compareInsight(left, right, session, compareTypeOf(session), SITES);
+  const winId = ins.winner?.site?.site_id;
+  const card = (pairing, letter) => {
+    if (!pairing) return "";
+    const win = winId && pairing.site.site_id === winId;
+    return `<article class="duel-col${win ? " on" : ""}">
+      <p class="eyebrow">${letter}${win ? " · walk this" : ""}</p>
+      <h3>${pairing.site.address || pairing.site.site_id}</h3>
+      <p class="muted">${VERDICT_LABEL[pairing.verdict]} · ${TYPOLOGY_LABELS[pairing.typology]} · mix ${
+        isUnknown(pairing.score) ? "unknown" : pairing.score
+      }</p>
+      <p class="muted">${factsStrip(pairing.site)}</p>
+      <div class="cta-row">
+        <a class="pill ghost" href="${mapsUrl(pairing.site)}" target="_blank" rel="noopener">Maps</a>
+        <button type="button" class="pill ghost" data-dossier="${pairing.site.site_id}">This lot</button>
+      </div>
+    </article>`;
+  };
+  return `<p class="eyebrow">Map compare</p>
+    <h3 class="serif duel-title">${ins.headline}</h3>
+    ${(ins.reasons || []).slice(0, 3).map((r) => `<p class="duel-why">${r}</p>`).join("")}
+    <div class="duel-grid">${card(ins.left, "A")}${card(ins.right, "B")}</div>
+    <div class="cta-row">
+      <button type="button" class="pill" data-full>Full compare</button>
+      <button type="button" class="pill ghost" data-clear>Clear pins</button>
+    </div>`;
+}
+
+function mixSlidersHtml(session) {
+  const raw = session.weights || {};
+  const n = normalizeWeights(raw);
+  return `<div class="scen-mix card">
+    <p class="eyebrow">Change the mix</p>
+    <p class="muted">${mixPointer(raw)} Moving a slider is a value judgment. The factor scores stay the file.</p>
+    ${FACTORS.map(
+      (k) => `<label class="algo-row">${FACTOR_LABELS[k]}
+        <input type="range" min="0" max="100" step="5" data-wk="${k}" value="${Math.round(Number(raw[k] || 0))}" />
+        <b>${Math.round((n[k] || 0) * 100)}%</b>
+      </label>`
+    ).join("")}
+  </div>`;
+}
+
+function bindMixRedraw(session, redraw) {
+  document.querySelectorAll("[data-wk]").forEach((input) => {
+    input.oninput = () => {
+      const next = { ...(session.weights || {}) };
+      document.querySelectorAll("[data-wk]").forEach((el) => {
+        next[el.dataset.wk] = Number(el.value);
+      });
+      session.weights = next;
+      saveSession(session);
+      redraw();
+    };
+  });
+}
+
 function viewCompare(session) {
   if (!SITES.length) {
     root.innerHTML = layoutApp(session, `<p class="muted">Loading lots…</p>`, "/compare");
     bindSignOut();
     return;
   }
+  const { parts } = route();
   const filters = readFilters();
-  const a = siteById(session.lastSiteId) || SITES[0];
-  const b = (a && SITES.find((s) => s.site_id !== a.site_id)) || SITES[1] || SITES[0];
-  if (!a || !b) {
-    root.innerHTML = layoutApp(session, `<p class="muted">Need at least two lots to compare.</p>`, "/compare");
+  const lotMode = Boolean(parts[1] && parts[2]);
+  const site = siteById(parts[1]) || siteById(session.lastSiteId) || SITES[0];
+  const other =
+    siteById(parts[2]) ||
+    (site && SITES.find((s) => s.site_id !== site.site_id)) ||
+    SITES[1] ||
+    SITES[0];
+  if (!site) {
+    root.innerHTML = layoutApp(session, `<p class="muted">Need a lot to compare.</p>`, "/compare");
     bindSignOut();
     return;
   }
+  session.lastSiteId = site.site_id;
+  saveSession(session);
   const optionPool = (() => {
     const filtered = filterSites(SITES, { ...filters, neighborhoods: [], q: "" });
     const keep = new Map();
-    [a, b, ...filtered.slice(0, 150)].forEach((s) => {
+    [site, other, ...filtered.slice(0, 150)].forEach((s) => {
       if (s && s.site_id) keep.set(s.site_id, s);
     });
     return [...keep.values()];
   })();
-  const type = filters.typology && (filters.typology === "any" || TYPOLOGIES.includes(filters.typology))
-    ? filters.typology
-    : missionTypesOf(session).length === 1
-      ? missionTypesOf(session)[0]
-      : "any";
-  const insight = compareInsight(a, b, session, type, SITES);
-  const typeChoices = [
-    ["any", "Best allowed type"],
-    ...missionTypesOf(session).map((t) => [t, TYPOLOGY_LABELS[t]]),
-  ];
+  const asked = (session.askTypes || []).filter((t) => HOUSING_TYPES.includes(t));
+  const typeA = HOUSING_TYPES.includes(session.scenarioA) ? session.scenarioA : asked[0] || "duplex";
+  const typeB = HOUSING_TYPES.includes(session.scenarioB) && session.scenarioB !== typeA
+    ? session.scenarioB
+    : asked.find((t) => t !== typeA) || (typeA === "duplex" ? "small_multifamily" : "duplex");
+  const typeChoices = HOUSING_TYPES.map((t) => [t, TYPOLOGY_LABELS[t]]);
+  const modeBar = `<div class="city-pick" style="margin:0.6rem 0 1rem">
+    <a class="choice chip${!lotMode ? " on" : ""}" href="#/compare">Two types, one lot</a>
+    <a class="choice chip${lotMode ? " on" : ""}" href="#/compare/${site.site_id}/${other?.site_id || ""}">Two lots, one type</a>
+  </div>`;
 
   function recHtml(ins) {
     if (!ins.winner) {
-      return `<article class="card insight" id="insight">
-        <h2 class="serif pairing-title">${ins.headline}</h2>
-      </article>`;
+      return `<article class="card insight" id="insight"><h2 class="serif pairing-title">${ins.headline}</h2></article>`;
     }
     return `<article class="card insight" id="insight">
-      <p class="eyebrow">Recommendation</p>
+      <p class="eyebrow">Scenarios, not a winner from the sky</p>
       <h2 class="serif pairing-title">${ins.headline}</h2>
-      <p><strong>Why this one</strong></p>
-      ${ (ins.reasons || []).map((r) => `<p>${r}</p>`).join("") }
+      ${(ins.reasons || []).map((r) => `<p>${r}</p>`).join("")}
+      ${splitLegendHtml(ins.winner, session)}
       ${tradeoffHtml(ins.winner.tradeoffs)}
       ${walkActionsHtml(ins.winner.site)}
     </article>`;
   }
 
-  function col(pairing, win, why) {
+  function typeCol(pairing, win) {
+    if (!pairing) return `<article class="card"><p class="muted">Pick a type.</p></article>`;
+    return `<article class="card ${win ? "on" : ""}">
+      <div class="match-top">
+        <span class="verdict ${pairing.verdict}">${VERDICT_LABEL[pairing.verdict]}</span>
+        ${win ? `<span class="small">This scenario</span>` : ""}
+        <span class="small">${isUnknown(pairing.score) ? "mix unknown" : `mix ${pairing.score}`}</span>
+      </div>
+      ${affordHtml(pairing.site, pairing.typology)}
+      <h3>${TYPOLOGY_LABELS[pairing.typology]}</h3>
+      <p class="muted">${walkLine(pairing.site, pairing.typology, pairing.verdict)}</p>
+      ${pointsHtml(pairing.points)}
+    </article>`;
+  }
+
+  function lotCol(pairing, win, why) {
     if (!pairing) return `<article class="card"><p class="muted">Choose a lot.</p></article>`;
     return `<article class="card ${win ? "on" : ""}">
       <div class="match-top">
@@ -1375,24 +1470,97 @@ function viewCompare(session) {
     </article>`;
   }
 
+  if (!lotMode) {
+    const insight = scenarioInsight(site, typeA, typeB, session);
+    const winType = insight.winner?.typology;
+    root.innerHTML = layoutApp(
+      session,
+      `
+      <p class="eyebrow">Compare</p>
+      <h2 class="serif">Two housing types on a real lot</h2>
+      <p class="muted">This is the brief. Same place, two scenarios, your mix, and what the file cannot claim.</p>
+      ${modeBar}
+      <label>This lot</label>
+      <select id="sc-site">${optionPool.map((s) => `<option value="${s.site_id}" ${s.site_id === site.site_id ? "selected" : ""}>${lotOptionLabel(s)}</option>`).join("")}</select>
+      <div class="grid2" style="margin:1rem 0">
+        <div><label>Scenario A</label><select id="sc-a">${typeChoices.map(([v, lab]) => `<option value="${v}" ${v === typeA ? "selected" : ""}>${lab}</option>`).join("")}</select></div>
+        <div><label>Scenario B</label><select id="sc-b">${typeChoices.map(([v, lab]) => `<option value="${v}" ${v === typeB ? "selected" : ""}>${lab}</option>`).join("")}</select></div>
+      </div>
+      ${mixSlidersHtml(session)}
+      ${recHtml(insight)}
+      <div class="grid2" id="cols" style="margin-top:1rem">${typeCol(insight.left, winType === insight.left?.typology)}${typeCol(insight.right, winType === insight.right?.typology)}</div>
+    `,
+      "/compare"
+    );
+    const redraw = () => {
+      const nextSite = siteById(document.getElementById("sc-site").value) || site;
+      const a = document.getElementById("sc-a").value;
+      const b = document.getElementById("sc-b").value;
+      session.lastSiteId = nextSite.site_id;
+      session.scenarioA = a;
+      session.scenarioB = b;
+      saveSession(session);
+      const next = scenarioInsight(nextSite, a, b, session);
+      const win = next.winner?.typology;
+      document.getElementById("insight").outerHTML = recHtml(next);
+      document.getElementById("cols").innerHTML = `${typeCol(next.left, win === next.left?.typology)}${typeCol(next.right, win === next.right?.typology)}`;
+      const mix = document.querySelector(".scen-mix");
+      if (mix) mix.outerHTML = mixSlidersHtml(session);
+      bindMixRedraw(session, redraw);
+      bindCopyPins();
+    };
+    document.getElementById("sc-site").onchange = redraw;
+    document.getElementById("sc-a").onchange = redraw;
+    document.getElementById("sc-b").onchange = redraw;
+    bindMixRedraw(session, redraw);
+    bindSignOut();
+    bindCopyPins();
+    return;
+  }
+
+  const type = filters.typology && (filters.typology === "any" || TYPOLOGIES.includes(filters.typology))
+    ? filters.typology
+    : missionTypesOf(session).length === 1
+      ? missionTypesOf(session)[0]
+      : "any";
+  const insight = compareInsight(site, other, session, type, SITES);
+  const typeLotChoices = [
+    ["any", "Best allowed type"],
+    ...missionTypesOf(session).map((t) => [t, TYPOLOGY_LABELS[t]]),
+  ];
+  const recLot = (ins) => {
+    if (!ins.winner) {
+      return `<article class="card insight" id="insight"><h2 class="serif pairing-title">${ins.headline}</h2></article>`;
+    }
+    return `<article class="card insight" id="insight">
+      <p class="eyebrow">Which lot</p>
+      <h2 class="serif pairing-title">${ins.headline}</h2>
+      ${(ins.reasons || []).map((r) => `<p>${r}</p>`).join("")}
+      ${splitLegendHtml(ins.winner, session)}
+      ${tradeoffHtml(ins.winner.tradeoffs)}
+      ${walkActionsHtml(ins.winner.site)}
+    </article>`;
+  };
   const paintCols = (ins) =>
-    col(ins.left, ins.winner && ins.left && ins.winner.site.site_id === ins.left.site.site_id, ins.reasons) +
-    col(ins.right, ins.winner && ins.right && ins.winner.site.site_id === ins.right.site.site_id, ins.reasons);
+    lotCol(ins.left, ins.winner && ins.left && ins.winner.site.site_id === ins.left.site.site_id, ins.reasons) +
+    lotCol(ins.right, ins.winner && ins.right && ins.winner.site.site_id === ins.right.site.site_id, ins.reasons);
 
   root.innerHTML = layoutApp(
     session,
     `
     <p class="eyebrow">Compare</p>
     <h2 class="serif">Which lot do you walk?</h2>
+    ${modeBar}
     <div class="grid2" style="margin-bottom:1rem">
-      <div><label>This lot</label><select id="sa">${optionPool.map((s) => `<option value="${s.site_id}" ${s.site_id === a.site_id ? "selected" : ""}>${lotOptionLabel(s)}</option>`).join("")}</select></div>
-      <div><label>Or this lot</label><select id="sb">${optionPool.map((s) => `<option value="${s.site_id}" ${s.site_id === b.site_id ? "selected" : ""}>${lotOptionLabel(s)}</option>`).join("")}</select></div>
+      <div><label>This lot</label><select id="sa">${optionPool.map((s) => `<option value="${s.site_id}" ${s.site_id === site.site_id ? "selected" : ""}>${lotOptionLabel(s)}</option>`).join("")}</select></div>
+      <div><label>Or this lot</label><select id="sb">${optionPool.map((s) => `<option value="${s.site_id}" ${s.site_id === other.site_id ? "selected" : ""}>${lotOptionLabel(s)}</option>`).join("")}</select></div>
     </div>
     <label>For this housing type</label>
     <select id="ft">
-      ${typeChoices.map(([v, lab]) => `<option value="${v}" ${type === v ? "selected" : ""}>${lab}</option>`).join("")}
+      ${typeLotChoices.map(([v, lab]) => `<option value="${v}" ${type === v ? "selected" : ""}>${lab}</option>`).join("")}
     </select>
-    ${recHtml(insight)}
+    ${mixSlidersHtml(session)}
+    ${recLot(insight)}
     <div class="grid2" id="cols" style="margin-top:1rem">${paintCols(insight)}</div>
   `,
     "/compare"
@@ -1403,14 +1571,26 @@ function viewCompare(session) {
     if (!left || !right) return;
     const typ = document.getElementById("ft").value;
     saveFilters({ filterTypology: typ });
-    const next = compareInsight(left, right, session, typ, SITES);
-    document.getElementById("insight").outerHTML = recHtml(next);
-    document.getElementById("cols").innerHTML = paintCols(next);
-    bindCopyPins();
+    session.lastSiteId = left.site_id;
+    saveSession(session);
+    go(`/compare/${left.site_id}/${right.site_id}`);
   };
   document.getElementById("sa").onchange = redraw;
   document.getElementById("sb").onchange = redraw;
-  document.getElementById("ft").onchange = redraw;
+  document.getElementById("ft").onchange = () => {
+    saveFilters({ filterTypology: document.getElementById("ft").value });
+    const next = compareInsight(
+      siteById(document.getElementById("sa").value),
+      siteById(document.getElementById("sb").value),
+      session,
+      document.getElementById("ft").value,
+      SITES
+    );
+    document.getElementById("insight").outerHTML = recLot(next);
+    document.getElementById("cols").innerHTML = paintCols(next);
+    bindCopyPins();
+  };
+  bindMixRedraw(session, () => viewCompare(session));
   bindSignOut();
   bindCopyPins();
 }
@@ -1437,7 +1617,7 @@ function viewScorecard(session, siteId) {
   const best = sortPairings(TYPOLOGIES.map((t) => buildPairing(site, t, session)))[0];
   const tags = scorecardTags(site, SITES);
   const report = [
-    `Parcel Fit visit dossier`,
+    `Parcel Fit lot card`,
     `${site.address} · ${site.neighborhood_name || ""} · PIN ${site.pin || "none"}`,
     `Tags: ${tags.map((t) => t.label).join(", ")}`,
     best ? `Call: ${VERDICT_LABEL[best.verdict]} for ${TYPOLOGY_LABELS[best.typology]}. Mix ${isUnknown(best.score) ? "unknown" : best.score}.` : "",
@@ -1454,7 +1634,7 @@ function viewScorecard(session, siteId) {
   root.innerHTML = layoutApp(
     session,
     `
-    <p class="eyebrow">Visit dossier</p>
+    <p class="eyebrow">This lot</p>
     <h2 class="serif">Would a Pittsburgh CDC put this lot on the list?</h2>
     <p class="muted">Tags first, then strengths versus watch-outs, then the five CDC filters. Open More for the source sentence. Ranking rules are in MATCHING.md.</p>
     <label>Lot</label>
@@ -1463,7 +1643,7 @@ function viewScorecard(session, siteId) {
       .join("")}</select>
     ${scorecardHtml(site, SITES, session)}
     <div class="cta-row" style="margin-top:1rem">
-      <button type="button" class="pill" id="op-copy">Copy dossier</button>
+      <button type="button" class="pill" id="op-copy">Copy this lot</button>
       ${walkActionsHtml(site)}
     </div>
   `,
@@ -1512,21 +1692,40 @@ function viewCity(session) {
     `
     <p class="eyebrow">City</p>
     <h2 class="serif">Every city vacant lot on the terrain</h2>
-    <p class="muted">Pegs are the WPRDC vacant file, not private land. Taller pegs sit in clusters. Switch layers for pathway, live NFHL flood, hillside, by-right type, street trees, or nearby LIHTC. Hover a peg. Click it for the dossier.</p>
-    <div class="city-stage" id="city-stage"></div>
+    <p class="muted">The terrain is the vacant file. Mix weights, layers, and the two-lot compare sit beside the map. Steering counts zoning, tax-credit distance, and whose land across the whole file.</p>
+    <div class="city-desk">
+      <div class="city-stage" id="city-stage"></div>
+      <aside class="city-rail" id="city-rail"></aside>
+    </div>
     <p class="small">Buildings are schematic boxes from the city I3S plan. Flood discs mark the lot, not the FIRM boundary. Cluster size is nearby city lots, not a surveyed assembly. Confirm on Maps before you walk.</p>
   `,
     "/city"
   );
   bindSignOut();
   const host = document.getElementById("city-stage");
-  import("./city3d.js?v=cdc13")
+  const rail = document.getElementById("city-rail");
+  import("./city3d.js?v=cdc26")
     .then(({ mountCity }) =>
       mountCity(host, {
         lots: SITES,
         visitIds: sites.map((s) => s.site_id),
         focusId: session.lastSiteId,
+        weights: session.weights,
+        types: missionTypesOf(session),
+        rail,
         onPick: (id) => go(`/scorecard/${id}`),
+        formatCompare: (a, b) => mapCompareHtml(a, b, session),
+        onDossier: (id) => go(`/scorecard/${id}`),
+        onFullCompare: (a, b) => go(`/compare/${a}/${b}`),
+        onWeights: (w, types) => {
+          const s = loadSession();
+          saveSession({
+            ...s,
+            weights: w,
+            missionTypes: types,
+            askTypes: types,
+          });
+        },
       })
     )
     .then((stop) => {
@@ -1537,26 +1736,102 @@ function viewCity(session) {
     });
 }
 
+function viewSteer(session) {
+  if (!SITES.length) {
+    root.innerHTML = layoutApp(session, `<p class="muted">Loading lots…</p>`, "/steer");
+    bindSignOut();
+    return;
+  }
+  const c = steerCitywide(SITES);
+  const n = (x) => Number(x).toLocaleString();
+  root.innerHTML = layoutApp(
+    session,
+    `
+    <p class="eyebrow">Steering</p>
+    <h2 class="serif">Three tools. That is most of the wheel.</h2>
+    <p class="muted">Local government does not build most buildings. It steers private investment with zoning and land use, tax incentives, and the land it already owns. This page counts those three on ${n(c.n)} city vacant lots. It is not a history of rezonings, and it is not private land.</p>
+    <div class="steer-grid">
+      <article class="card steer-col">
+        <p class="eyebrow">Zoning and land use</p>
+        <p><strong>${n(c.both)}</strong> lots already allow both a two-family house and a small apartment by-right.</p>
+        <p class="muted">Two-family only ${n(c.duplex)} · small apartment only ${n(c.mf)} · neither ${n(c.neither)} · zoning not on file ${n(c.zUnk)}</p>
+        <p class="small">Primary-use by-right from this dump, not overlays or a live ROZA pull. Switch the City map to By-right type to see it.</p>
+      </article>
+      <article class="card steer-col">
+        <p class="eyebrow">Tax incentives</p>
+        <p><strong>${n(c.lihtcNear)}</strong> lots sit within a quarter mile of a mapped HUD LIHTC project.</p>
+        <p class="muted">Farther ${n(c.lihtcFar)} · distance not joined ${n(c.lihtcUnk)}</p>
+        <p class="small">This is a federal tax-credit map. TIF, LERTA, KOZ, Opportunity Zone, and city abatement are not joined. We will not invent them.</p>
+      </article>
+      <article class="card steer-col">
+        <p class="eyebrow">Public land</p>
+        <p><strong>${n(c.land["Public Sale"])}</strong> on public sale · <strong>${n(c.land["URA Transfer"])}</strong> URA · <strong>${n(c.land["PLB Transfer"])}</strong> Land Bank · <strong>${n(c.land["CDC Property Reserve"])}</strong> CDC reserve.</p>
+        <p class="muted">${c.land.other ? `${n(c.land.other)} other public labels.` : "Those four labels are the whole vacant dump."}</p>
+        <p class="small">This is the land the city already holds. Private tax-delinquent stock is not here. Switch City to Whose land.</p>
+      </article>
+    </div>
+    <p class="eyebrow" style="margin-top:1.4rem">What the district can take</p>
+    <p class="muted">Same Ch. 911 weekend reading as the lot card. Affordable housing is not a zone. It is a home already allowed in a tract below Pittsburgh typical income.</p>
+    <div class="steer-grid">
+      ${["affordable", "single_family", "duplex", "small_multifamily", "office", "commercial", "industrial"]
+        .map((id) => {
+          const labs = {
+            affordable: "Affordable housing",
+            single_family: "Single-family housing",
+            duplex: "Two-family house",
+            small_multifamily: "Small apartment",
+            office: "Offices",
+            commercial: "Commercial",
+            industrial: "Industrial",
+          };
+          const u = c.uses[id];
+          return `<article class="card steer-col">
+            <p class="eyebrow">${labs[id]}</p>
+            <p><strong>${n(u.yes)}</strong> lots where this is already allowed or in play.</p>
+            <p class="muted">Not this district ${n(u.no)} · unknown ${n(u.unk)}</p>
+          </article>`;
+        })
+        .join("")}
+    </div>
+    <article class="card" style="margin-top:1rem">
+      <h3>What this still cannot do</h3>
+      <p>It cannot show where most private buildings will go. It cannot show which tax deal a council actually used. Open a lot for the three tools on that parcel, or compare two lots on the map.</p>
+      <div class="cta-row">
+        <a class="pill" href="#/city">City map</a>
+        <a class="pill ghost" href="#/scorecard">This lot</a>
+      </div>
+    </article>
+  `,
+    "/steer"
+  );
+  bindSignOut();
+}
+
 function viewBriefing(session) {
   root.innerHTML = layoutApp(
     session,
     `
     <p class="eyebrow">What this is</p>
     <h2 class="serif">A matchmaker that shows the conflict</h2>
-    <p class="muted">The useful output is not a winner. It is what you get, what you give up, and what this file cannot answer.</p>
+    <p class="muted">The useful output is not a winner. It is what you get, what you give up, and what this file cannot answer. For planning and economic development, the file is how public vacant land sits against the three tools a city actually holds.</p>
     <div class="grid2">
-      <article class="card"><h3>Demand</h3><p class="muted">Census renter share on two Hill tracts. Blank elsewhere. Not a waitlist.</p></article>
-      <article class="card"><h3>Transit</h3><p class="muted">Feet to a PRT stop on the genesis sample only. Access, not a climate score.</p></article>
+      <article class="card"><h3>Zoning</h3><p class="muted">By-right two-family and small apartment on the vacant dump. Visit/Hold/Skip is that gate. Overlays are not encoded.</p></article>
+      <article class="card"><h3>Tax incentives</h3><p class="muted">Nearest HUD LIHTC point. Not TIF, LERTA, KOZ, or a city abatement log.</p></article>
+      <article class="card"><h3>Public land</h3><p class="muted">Sale, URA, Land Bank, CDC reserve. Private land is most of the market and is not in this file.</p></article>
+      <article class="card"><h3>Demand</h3><p class="muted">Census renter share where the tract joined. Blank elsewhere. Not a waitlist.</p></article>
       <article class="card"><h3>Equity</h3><p class="muted">Rent burden and the gap between typical rent paid and 30% of typical income. Neighborhood strain, not evictions or who gets the new unit.</p></article>
-      <article class="card"><h3>Climate</h3><p class="muted">Live FEMA NFHL at the point. Street-tree count and the city's tree CO2 calculator within 400 ft. Bus is access. Building operational carbon is still not measured.</p></article>
-      <article class="card"><h3>Who benefits</h3><p class="muted">Tract income vs Pittsburgh typical, plus nearest HUD LIHTC project. Who lives nearby now, not who gets a future key.</p></article>
-      <article class="card"><h3>Who might be harmed</h3><p class="muted">Neighbors already overpaying rent if new units track the tract median. Households that wanted a house-scale building if you pick a small apartment.</p></article>
+      <article class="card"><h3>Climate</h3><p class="muted">Live FEMA NFHL at the point. TPL 2023 land-surface heat 1–5 versus the city mean, not air temperature. Street-tree count and the city's tree CO2 calculator within 400 ft. Building operational carbon is still not measured.</p></article>
+      <article class="card"><h3>What a judge should click</h3><p class="muted">Compare: two types on one lot, move the mix, read From the file / Your call / Not claimed. That is the success line. It is not CHAS, jobs, schools, or a carbon kilogram.</p></article>
     </div>
     <article class="card" style="margin-top:1rem">
       <h3>Sources</h3>
       <p><a href="https://data.wprdc.org/dataset/city-owned-properties">City-owned properties (WPRDC)</a></p>
       <p><a href="https://ecode360.com/45476528">Pittsburgh zoning code, primary uses</a></p>
       <p>ACS 2024 5-year for two Hill tracts; others blank</p>
+      <p><a href="https://www.arcgis.com/home/item.html?id=db5bdb0f0c8c4b85b8270ec67448a0b6">TPL Heat Severity USA 2023</a></p>
+      <p><a href="https://data.wprdc.org/dataset/property-assessments">Allegheny County property assessments (WPRDC)</a> · land FMV is 2012 base year</p>
+      <p>ACS 2024 5-year B25077 median owner-occupied home value · Pittsburgh city typical $205,800</p>
+      <p><a href="https://www.alleghenycounty.us/files/assets/county/v/2/government/economic-development/documents/housing/achdf-2025-addendum.pdf">Allegheny County 2025 HOME 2-bedroom elevator ceiling $261,595</a> · subsidy cap, not a bid</p>
       <p>PRT stops on the genesis sample only</p>
     </article>
   `,
@@ -1614,8 +1889,9 @@ function render() {
     if (!session) return;
     if (path === "/home" || path === "/match" || path.startsWith("/match/")) return viewMatch(session);
     if (path === "/pipeline") return viewPipeline(session);
-    if (path === "/compare") return viewCompare(session);
+    if (path === "/compare" || path.startsWith("/compare/")) return viewCompare(session);
     if (path === "/city") return viewCity(session);
+    if (path === "/steer") return viewSteer(session);
     if (path === "/scorecard" || path.startsWith("/scorecard/")) return viewScorecard(session, parts[1]);
     if (path === "/briefing") return viewBriefing(session);
     if (path === "/account") return viewAccount(session);

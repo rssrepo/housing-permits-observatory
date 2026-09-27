@@ -269,7 +269,8 @@ def main() -> None:
         s["slope_note"] = "City of Pittsburgh 25% or greater slope polygons (WPRDC / PGH GIS). Point-in-polygon."
         if steep:
             n_slope += 1
-        s["heat_note"] = "No public lot-level heat raster joined. Street trees and LST are not this file."
+        if not str(s.get("heat_severity") or "").strip():
+            s["heat_note"] = "No TPL heat-severity pixel on this lot. Street trees are shade, not LST."
 
     SITES.write_text(json.dumps(sites))
     print(f"ACS lots {n_acs}, transit {n_bus}, flood {n_flood}, steep {n_slope}")

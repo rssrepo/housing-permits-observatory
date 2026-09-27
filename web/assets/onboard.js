@@ -1,4 +1,6 @@
-export const ASK_N = 13;
+import { TYPOLOGIES, TYPOLOGY_HINTS, TYPOLOGY_LABELS } from "./scoring.js?v=cdc26";
+
+export const ASK_N = 14;
 
 export const LAND_OPTS = [
   { v: "Public Sale", lab: "Public sale" },
@@ -19,6 +21,7 @@ export function defaultAsk() {
     askSlope: "warn",
     askBus: 0,
     askTrees: 0,
+    askHeat: "warn",
     askLihtc: "skip",
     askAllCity: false,
     askPlaces: [],
@@ -29,7 +32,7 @@ export function defaultAsk() {
 export function ensureAsk(s) {
   const d = defaultAsk();
   if (!Array.isArray(s.askTypes) || !s.askTypes.length) {
-    s.askTypes = (s.missionTypes || d.askTypes).filter((t) => t === "duplex" || t === "small_multifamily");
+    s.askTypes = (s.missionTypes || d.askTypes).filter((t) => TYPOLOGIES.includes(t));
     if (!s.askTypes.length) s.askTypes = ["duplex"];
   }
   if (!s.askByRight) s.askByRight = s.missionByRight === false ? "skip" : "prefer";
@@ -41,6 +44,7 @@ export function ensureAsk(s) {
   if (!s.askSlope) s.askSlope = "warn";
   if (s.askBus == null) s.askBus = Number(s.transitMaxFt || 0);
   if (s.askTrees == null) s.askTrees = 0;
+  if (!s.askHeat) s.askHeat = "warn";
   if (!s.askLihtc) s.askLihtc = "skip";
   if (s.askAllCity == null) s.askAllCity = Boolean(s.missionAllCity);
   if (!Array.isArray(s.askPlaces)) s.askPlaces = s.missionPlaces || [];
@@ -59,6 +63,7 @@ export function snapshotAsk(s) {
     askSlope: s.askSlope,
     askBus: s.askBus,
     askTrees: s.askTrees,
+    askHeat: s.askHeat,
     askLihtc: s.askLihtc,
     askAllCity: s.askAllCity,
     askPlaces: [...(s.askPlaces || [])],
@@ -81,7 +86,7 @@ export function syncMix(s) {
   s.weights = w;
   s.transitMaxFt = Number(s.askBus || 0);
   s.missionByRight = s.askByRight === "must";
-  s.missionTypes = s.askTypes.filter((t) => t === "duplex" || t === "small_multifamily");
+  s.missionTypes = s.askTypes.filter((t) => TYPOLOGIES.includes(t));
   if (!s.missionTypes.length) s.missionTypes = ["duplex"];
   s.missionType = s.missionTypes.length === 1 ? s.missionTypes[0] : "any";
   s.missionPlaces = s.askAllCity ? [] : s.askPlaces || [];
@@ -204,18 +209,15 @@ export const SLIDES = [
     id: "role",
     kind: "role",
     title: "Who is using this desk?",
-    muted: "This only changes how the home screen talks to you. It does not rank lots.",
+    muted: "Planning and economic development get the three tools a city actually holds. CDCs get a walk list. This does not rank lots by itself.",
   },
   {
     id: "type",
     kind: "multi",
     key: "askTypes",
     title: "What are you trying to put on the ground?",
-    muted: "A pairing is one type on one lot. Pick every type you would actually try this month.",
-    options: [
-      { v: "duplex", lab: "Two-family house", sub: "A house split into two homes." },
-      { v: "small_multifamily", lab: "Small apartment building", sub: "About three to six homes on one city lot." },
-    ],
+    muted: "A pairing is one type on one lot. Homes and workplaces are both allowed. Workplace mix does not use rent scores.",
+    options: TYPOLOGIES.map((v) => ({ v, lab: TYPOLOGY_LABELS[v], sub: TYPOLOGY_HINTS[v] })),
   },
   {
     id: "right",
@@ -309,8 +311,20 @@ export const SLIDES = [
     key: "askTrees",
     max: 2,
     title: "Shade at the curb",
-    muted: "City street trees within 400 feet. Not a satellite temperature.",
+    muted: "City street trees within 400 feet. Shade, not the heat raster.",
     labels: ["Doesn't matter", "Prefer more trees", "Want trees on the block"],
+  },
+  {
+    id: "heat",
+    kind: "tiles",
+    key: "askHeat",
+    title: "Surface heat",
+    muted: "TPL 2023 Landsat land surface versus the city's mean. Not air temperature.",
+    options: [
+      { v: "skip", lab: "Skip the hottest pixels (4–5)" },
+      { v: "warn", lab: "Show it and warn" },
+      { v: "ignore", lab: "Ignore" },
+    ],
   },
   {
     id: "lihtc",

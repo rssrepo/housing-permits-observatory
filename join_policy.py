@@ -228,10 +228,14 @@ def main() -> None:
         n_trees, co2 = trees_near(lon, lat, trees)
         s["trees_400ft"] = str(n_trees)
         s["tree_co2_lbs"] = str(co2)
-        s["heat_note"] = (
+        s["tree_note"] = (
             "City of Pittsburgh DPW street-tree inventory (WPRDC; last refresh ~2020). "
-            "Count within 400 ft. Shade/heat proxy at the curb, not a land-surface temperature raster."
+            "Count within 400 ft. Shade at the curb, not land-surface temperature."
         )
+        if not str(s.get("heat_severity") or "").strip():
+            s["heat_note"] = (
+                "No TPL heat-severity pixel on this lot. Street-tree count is shade, not LST."
+            )
         s["carbon_note"] = (
             "Tree CO2 lbs are the city's forestry calculator on those street trees, not operational carbon of a new building."
         )
