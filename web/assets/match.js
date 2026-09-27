@@ -17,9 +17,9 @@ import {
   typicalHomeValueUsd,
   typicalRentUsd,
   usd,
-} from "./scoring.js?v=cdc26";
-import { useChipsHtml, useCounts } from "./uses.js?v=cdc26";
-import { useAllows } from "./zone.js?v=cdc26";
+} from "./scoring.js?v=cdc27";
+import { useChipsHtml, useCounts } from "./uses.js?v=cdc27";
+import { useAllows } from "./zone.js?v=cdc27";
 
 const ZONING_KEY = {
   duplex: "zoning_allows_duplex",
@@ -559,9 +559,9 @@ export function affordHtml(site, typology) {
   const tone = a.spread == null ? "warn" : a.spread >= 0 ? "go" : "bad";
   const spreadClean =
     a.spread == null
-      ? spreadLine
+      ? "Need both a tract home value and land value to stack typical sales against land plus the HOME ceiling."
       : a.spread >= 0
-        ? `If each unit sold at the tract typical, that is ${spread} above land plus the HOME 2-bedroom ceiling. Not a bid and not an appraisal.`
+        ? `If each unit sold at the tract typical, that is ${money(a.spread)} above land plus the HOME 2-bedroom ceiling. Not a bid and not an appraisal.`
         : `If each unit sold at the tract typical, you are about ${money(Math.abs(a.spread))} short of land plus the HOME 2-bedroom ceiling. Not a bid and not an appraisal.`;
   return `<div class="afford-band tone-${tone}">
     <p class="eyebrow">Can you cover a build?</p>

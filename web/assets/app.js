@@ -1,5 +1,5 @@
-import { loadSession, saveSession, signIn, signOut, DEMO } from "./auth.js?v=cdc26";
-import { answerQuery, ASK_PROMPTS } from "./ask.js?v=cdc26";
+import { loadSession, saveSession, signIn, signOut, DEMO } from "./auth.js?v=cdc27";
+import { answerQuery, ASK_PROMPTS } from "./ask.js?v=cdc27";
 import {
   FACTOR_LABELS,
   FACTORS,
@@ -12,7 +12,7 @@ import {
   readField,
   scoreSite,
   normalizeWeights,
-} from "./scoring.js?v=cdc26";
+} from "./scoring.js?v=cdc27";
 import {
   VERDICT_LABEL,
   buildPairing,
@@ -40,7 +40,7 @@ import {
   typicalRentLine,
   walkActionsHtml,
   walkLine,
-} from "./match.js?v=cdc26";
+} from "./match.js?v=cdc27";
 import {
   ASK_N,
   SLIDES,
@@ -49,7 +49,7 @@ import {
   restoreAsk,
   snapshotAsk,
   syncMix,
-} from "./onboard.js?v=cdc26";
+} from "./onboard.js?v=cdc27";
 
 const root = document.getElementById("app");
 let SITES = [];
@@ -1704,7 +1704,7 @@ function viewCity(session) {
   bindSignOut();
   const host = document.getElementById("city-stage");
   const rail = document.getElementById("city-rail");
-  import("./city3d.js?v=cdc26")
+  import("./city3d.js?v=cdc27")
     .then(({ mountCity }) =>
       mountCity(host, {
         lots: SITES,
