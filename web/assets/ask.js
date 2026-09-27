@@ -1,11 +1,11 @@
-import { TYPOLOGY_LABELS, displacementGapUsd, isUnknown, predictedRentUsd, PGH_MEDIAN_GROSS_RENT, PGH_MEDIAN_HOME_VALUE, typicalHomeValueUsd, landFmvUsd, homeValueSource, landValueSource, readField } from "./scoring.js?v=cdc48";
+import { TYPOLOGY_LABELS, displacementGapUsd, isUnknown, predictedRentUsd, PGH_MEDIAN_GROSS_RENT, PGH_MEDIAN_HOME_VALUE, typicalHomeValueUsd, landFmvUsd, homeValueSource, landValueSource, buildAfford, HARD_PSF_USD, readField } from "./scoring.js?v=cdc51";
 import {
   currentWalks,
   deckPairings,
   mapsUrl,
   walkLine,
   featuredPairing,
-} from "./match.js?v=cdc48";
+} from "./match.js?v=cdc56";
 
 let pendingPlan = null;
 
@@ -265,7 +265,7 @@ export function answerQuery(raw, { sites, session, filters }) {
         isUnknown(pin) ? "No PIN in this file." : `PIN ${esc(pin)}`,
       ],
       links: [{ href: mapsUrl(s), lab: "Open in Maps" }],
-      note: "Open CDC screen on the lot for pathway, 220-foot clusters, and by-right. VPRP is not in this dump.",
+      note: "Open This lot for pathway, nearby empty lots, and whether the building is already allowed.",
     });
   }
 
@@ -387,8 +387,8 @@ export function answerQuery(raw, { sites, session, filters }) {
 
   if (/opportunit|scorecard|enterprise|360/.test(q)) {
     return card({
-      title: "Open this lot on CDC screen.",
-      note: "Tags, strengths vs watch-outs, then the five CDC filters. Ranking is in MATCHING.md.",
+      title: "Open this lot.",
+      note: "Tags, what helps, what to watch. Ranking is in MATCHING.md.",
     });
   }
 
@@ -406,11 +406,22 @@ export function answerQuery(raw, { sites, session, filters }) {
         const landLab = ls === "roll" ? "2012 county land roll" : "2024-2025 vacant-lot sales";
         items.push(esc(`This PIN's land from ${landLab} is about $${land.toLocaleString()}.`));
       }
+      const aff = buildAfford(top.site, "duplex");
+      if (aff.cost != null) {
+        items.push(esc(`A simple two-family build is about $${aff.cost.toLocaleString()} (${(aff.gfa || 0).toLocaleString()} sf × $${HARD_PSF_USD}/sf).`));
+      }
+      if (aff.spread != null && aff.spread >= 0) {
+        items.push(esc(`Nearby sale covers land plus that build by about $${aff.spread.toLocaleString()}.`));
+      } else if (aff.homeCoversGap) {
+        items.push(esc(`Sale is about $${Math.abs(aff.spread).toLocaleString()} short. A housing subsidy could fill that gap.`));
+      } else if (aff.spread != null) {
+        items.push(esc(`Sale is about $${Math.abs(aff.spread).toLocaleString()} short, and the usual subsidy cap is not enough.`));
+      }
       return card({
         kicker: "Nearby sale vs this land",
         title: top.site.address,
         items,
-        note: "Finished-home typical is not a vacant-lot listing. HOME ceiling is a subsidy cap, not a bid.",
+        note: "Nearby home price is not a listing for this empty lot. $180/sf is a simple build cost, not a bid. A housing subsidy only fills a gap.",
       });
     }
     return card({

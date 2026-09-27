@@ -6,9 +6,9 @@ import {
   isUnknown,
   normalizeWeights,
   scoreSite,
-} from "./scoring.js?v=cdc30";
+} from "./scoring.js?v=cdc51";
 import { primaryUse, useAllows } from "./uses.js?v=cdc30";
-import { LAYERS, LEGEND, bucketOf, layerLabel, passesMapFilters, swatchLabel, activeStack } from "./mapfilter.js?v=cdc39";
+import { LAYERS, LEGEND, bucketOf, layerLabel, passesMapFilters, swatchLabel, activeStack } from "./mapfilter.js?v=cdc40";
 
 const FACTOR_SHORT = {
   feasibility: "Allowed",
@@ -192,6 +192,7 @@ export async function mountCity(
     onFullCompare = null,
     rail = null,
     onMapFilter = null,
+    onAddVisit = null,
     mapFilters = null,
   } = {}
 ) {
@@ -215,7 +216,7 @@ export async function mountCity(
   hud.innerHTML = `<div class="city-layers">${LAYERS.map(
       (l, i) => `<button type="button" class="choice chip${i === 0 ? " on" : ""}" data-layer="${l.id}">${l.lab}</button>`
     ).join("")}</div>
-    <p class="algo-note">Color is one layer. Click a legend class to keep those pegs. By-right lets you pick more than one type: a lot stays if it already allows any of them. Mix score is four classes. Stack other layers too.</p>
+    <p class="algo-note">Pick a color. Click a class in the list to keep those lots. Already allowed lets you pick more than one building type.</p>
     <div class="city-legend" id="city-legend"></div>
     <div class="city-stack" id="city-stack"></div>
     <div class="city-hits" id="city-hits"></div>`;
@@ -230,9 +231,10 @@ export async function mountCity(
   const tools = document.createElement("div");
   tools.className = "city-tools";
   tools.innerHTML = `<p class="eyebrow">When you click a peg</p>
-    <p class="algo-note">Not a filter. Compare two lots on the map, or open one lot card.</p>
+    <p class="algo-note">Add puts this exact lot on your visits list. Compare is two lots. Open is the long card.</p>
     <div class="city-pick">
-      <button type="button" class="choice chip on" data-mode="compare">Compare two</button>
+      <button type="button" class="choice chip on" data-mode="walk">Add to visits</button>
+      <button type="button" class="choice chip" data-mode="compare">Compare two</button>
       <button type="button" class="choice chip" data-mode="open">Open this lot</button>
     </div>`;
   dock.appendChild(tools);
@@ -256,7 +258,7 @@ export async function mountCity(
     stacked.use = [...new Set([...(stacked.use || []), ...mapped])];
     delete stacked.build;
   }
-  let clickMode = "compare";
+  let clickMode = "walk";
   let pickA = null;
   let pickB = null;
   let dragMoved = false;
@@ -345,7 +347,7 @@ export async function mountCity(
       (t) =>
         `<button type="button" class="choice chip${mixTypes.includes(t) ? " on" : ""}" data-type="${t}">${TYPOLOGY_LABELS[t]}</button>`
     ).join("");
-    algo.innerHTML = `<p class="eyebrow">Typology mix</p>
+    algo.innerHTML = `<p class="eyebrow">What you care about</p>
       <div class="algo-split">
         ${radarSvg(mixWeights)}
         <div class="algo-sliders">${rows}</div>
@@ -385,7 +387,7 @@ export async function mountCity(
     duel.hidden = false;
     if (!pickB) {
       duel.innerHTML = `<p class="eyebrow">First lot</p>
-        <p class="duel-addr">${pickA.address || pickA.site_id}</p>
+        <p class="duel-addr">${pickA.address || pickA.site_id}${pickA.pin ? ` · PIN ${pickA.pin}` : ""}</p>
         <p class="algo-note">${pickA.neighborhood_name || ""} · click a second peg</p>
         <div class="cta-row"><button type="button" class="pill ghost" data-clear>Clear</button></div>`;
     } else if (formatCompare) {
@@ -527,14 +529,16 @@ export async function mountCity(
         .slice(0, 16)
         .map(
           (s) =>
-            `<button type="button" class="choice chip" data-hit="${s.site_id}">${s.address || s.site_id}</button>`
+            `<button type="button" class="choice chip" data-hit="${s.site_id}">${s.address || s.site_id}${s.pin ? ` · PIN ${s.pin}` : ""}</button>`
         )
         .join("")}${n > 16 ? `<p class="muted">First 16 shown. The map holds the rest.</p>` : ""}
-      ${Object.keys(active).length ? `<div class="cta-row"><button type="button" class="pill" data-to-visits>Use this cut on visits</button></div>` : ""}`;
+      ${Object.keys(active).length ? `<div class="cta-row"><button type="button" class="pill" data-to-visits>Add these lots to visits</button></div>` : ""}`;
     hitsEl.querySelectorAll("[data-hit]").forEach((btn) => {
       btn.onclick = (e) => {
         e.stopPropagation();
-        if (onDossier) onDossier(btn.dataset.hit);
+        const id = btn.dataset.hit;
+        if (onAddVisit) onAddVisit(id);
+        else if (onDossier) onDossier(id);
       };
     });
     const goVisits = hitsEl.querySelector("[data-to-visits]");
@@ -734,7 +738,7 @@ export async function mountCity(
     tip.hidden = false;
     tip.style.left = `${e.clientX - rect.left + 12}px`;
     tip.style.top = `${e.clientY - rect.top + 12}px`;
-    const bits = [site.address, site.neighborhood_name, site.inventory_type].filter(Boolean);
+    const bits = [site.address, site.pin ? `PIN ${site.pin}` : "", site.neighborhood_name, site.inventory_type].filter(Boolean);
     const mix = mixById.get(site.site_id);
     if (layer === "mix" && mix) {
       bits.push(mix.n < 0 ? "mix unknown" : `mix ${Math.round(mix.n)}${mix.t ? ` · ${TYPOLOGY_LABELS[mix.t] || mix.t}` : ""}`);
@@ -746,6 +750,11 @@ export async function mountCity(
   }
   function applyPick(site) {
     if (!site) return;
+    if (clickMode === "walk") {
+      if (onAddVisit) onAddVisit(site.site_id);
+      else if (onPick) onPick(site.site_id);
+      return;
+    }
     if (clickMode === "compare") {
       if (!pickA) {
         pickA = site;

@@ -23,10 +23,10 @@ export const TYPOLOGY_HINTS = {
   duplex: "A house split into two homes.",
   small_multifamily: "About three to six homes on one city lot.",
   single_family: "One house on the lot.",
-  affordable: "A home already allowed in a tract below Pittsburgh typical income. Not a tax-credit award.",
-  office: "Workspace. Mix uses district, lot, and bus. Not a rent score.",
-  commercial: "Storefront or commercial space. Mix uses district, lot, and bus.",
-  industrial: "Industrial or workshop space. Mix uses district, lot, and bus.",
+  affordable: "Homes meant to stay cheaper than the market. Still has to be allowed here.",
+  office: "Workspace. Uses zoning, lot size, and the bus. Not rent.",
+  commercial: "A shop or storefront. Uses zoning, lot size, and the bus.",
+  industrial: "A workshop or industrial space. Uses zoning, lot size, and the bus.",
 };
 export const HOUSING_TYPES = ["duplex", "small_multifamily", "single_family", "affordable"];
 export const FACTORS = ["feasibility", "demand_fit", "affordability_impact", "displacement_risk", "climate_proxy"];
@@ -38,11 +38,11 @@ export const FACTOR_LABELS = {
   climate_proxy: "Close to a bus stop",
 };
 export const FACTOR_HELP = {
-  feasibility: "Zoning permission plus whether the lot is large enough for this housing type.",
-  demand_fit: "Share of nearby households that rent, from the Census. Not a waitlist.",
-  affordability_impact: "Share of nearby renters who spend 30% or more of income on rent. Typical neighborhood rent is ACS median gross rent, not a listing for this lot.",
-  displacement_risk: "Gap between typical rent paid nearby and what typical income can carry at 30%. Neighborhood pressure, not a household eviction model.",
-  climate_proxy: "Walking distance to the nearest Port Authority bus stop. Transit access, not a carbon score.",
+  feasibility: "Is this building already allowed, and is the lot big enough?",
+  demand_fit: "Share of nearby households that rent. Census, not a waitlist.",
+  affordability_impact: "Share of nearby renters who spend a lot of their income on rent.",
+  displacement_risk: "Whether nearby rent is already higher than typical income can carry. Not an eviction count.",
+  climate_proxy: "Walking distance to the nearest bus stop.",
 };
 const ZONING_FIELDS = {
   duplex: "zoning_allows_duplex",
@@ -274,12 +274,18 @@ export function ranked(result) {
 export const PGH_MEDIAN_GROSS_RENT = 1261;
 export const PGH_MEDIAN_HOME_VALUE = 239865;
 export const HOME_2BR_USD = 261595;
+export const HARD_PSF_USD = 180;
+export const UNIT_GFA_SF = 1100;
+export const LOT_COVERAGE = 0.4;
 export const TYPE_UNITS = {
   duplex: 2,
   small_multifamily: 4,
   single_family: 1,
   affordable: 4,
 };
+
+export const HARD_COST_NOTE =
+  "Wood-frame infill at $180 a square foot, the midpoint of published Type V garden-style hard-cost ranges ($150–$210). Floor area is 1,100 sf per unit, or 40% of the lot times two floors (one floor for a single house), whichever is smaller. Hard cost only. Soft costs, hillside extras, and prevailing wage are not in this number. Not a bid.";
 
 export function usd(n) {
   if (n == null || !Number.isFinite(Number(n))) return null;
@@ -331,17 +337,59 @@ export function landValueSource(row) {
   return null;
 }
 
+export function buildGfaSf(row, typology) {
+  const units = TYPE_UNITS[typology] || 0;
+  if (!units) return null;
+  const cap = units * UNIT_GFA_SF;
+  const sq = Number(readField(row, "parc_sq_ft"));
+  const floors = typology === "single_family" ? 1 : 2;
+  if (Number.isFinite(sq) && sq > 0) {
+    return Math.max(200, Math.min(cap, Math.round(sq * LOT_COVERAGE * floors)));
+  }
+  return cap;
+}
+
 export function buildAfford(row, typology) {
   const land = landFmvUsd(row);
   const home = typicalHomeValueUsd(row);
   const units = TYPE_UNITS[typology] || 0;
   const housing = HOUSING_TYPES.includes(typology);
-  const cost = housing ? HOME_2BR_USD * units : null;
-  const sale = housing && !isUnknown(home) ? home * units : null;
   const landN = isUnknown(land) ? null : land;
+  const homeN = isUnknown(home) ? null : home;
+  const gfa = housing ? buildGfaSf(row, typology) : null;
+  const cost = housing && gfa != null ? Math.round(gfa * HARD_PSF_USD) : null;
+  const sale = housing && homeN != null ? homeN * units : null;
+  const homeCap = housing && units ? HOME_2BR_USD * units : null;
   let spread = null;
-  if (sale != null && cost != null && landN != null) spread = sale - (landN + cost);
-  return { land: landN, home: isUnknown(home) ? null : home, units, cost, sale, spread, housing };
+  let gap = null;
+  if (sale != null && cost != null && landN != null) {
+    spread = sale - (landN + cost);
+    gap = Math.max(0, -spread);
+  }
+  const homeFills = gap != null && homeCap != null ? Math.min(gap, homeCap) : null;
+  const homeCoversGap = gap != null && gap > 0 && homeCap != null && homeCap >= gap;
+  return {
+    land: landN,
+    home: homeN,
+    units,
+    gfa,
+    psf: housing ? HARD_PSF_USD : null,
+    cost,
+    sale,
+    spread,
+    gap,
+    homeCap,
+    homeFills,
+    homeCoversGap,
+    housing,
+  };
+}
+
+export function affordTone(a) {
+  if (!a || !a.housing || a.spread == null) return "warn";
+  if (a.spread >= 0) return "go";
+  if (a.homeCoversGap) return "warn";
+  return "bad";
 }
 
 export function typicalRentUsd(row) {

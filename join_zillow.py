@@ -77,7 +77,7 @@ def main() -> None:
     for s in sites:
         key = norm(s.get("neighborhood_name"))
         val = zmap.get(key)
-        if val:
+        if key and val:
             s["zillow_zhvi_usd"] = str(val)
             s["zillow_zhvi_month"] = month
             s["zillow_note"] = NOTE

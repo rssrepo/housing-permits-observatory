@@ -1,4 +1,4 @@
-import { TYPOLOGIES, TYPOLOGY_HINTS, TYPOLOGY_LABELS } from "./scoring.js?v=cdc28";
+import { TYPOLOGIES, TYPOLOGY_HINTS, TYPOLOGY_LABELS } from "./scoring.js?v=cdc51";
 
 export const ASK_N = 14;
 
@@ -99,7 +99,7 @@ export function detectClash(s, justId) {
     return {
       thisLab: "must already be allowed",
       vsLab: "small apartment",
-      text: "Must by-right will drop most single-family districts. Does by-right matter more than chasing a small apartment?",
+      text: "Must already be allowed will drop most single-family districts. Does already-allowed matter more than chasing a small apartment?",
       soften:
         justId === "right"
           ? (row) => {
@@ -209,14 +209,14 @@ export const SLIDES = [
     id: "role",
     kind: "role",
     title: "Who is using this desk?",
-    muted: "Planning and economic development get the three tools a city actually holds. CDCs get a walk list. This does not rank lots by itself.",
+    muted: "Neighborhood staff get a walk list. Planners see what the city already allows and owns. This does not rank lots by itself.",
   },
   {
     id: "type",
     kind: "multi",
     key: "askTypes",
     title: "What are you trying to put on the ground?",
-    muted: "A pairing is one type on one lot. Homes and workplaces are both allowed. Workplace mix does not use rent scores.",
+    muted: "Pick at least one. A house, a small apartment, a shop, or a workplace.",
     options: TYPOLOGIES.map((v) => ({ v, lab: TYPOLOGY_LABELS[v], sub: TYPOLOGY_HINTS[v] })),
   },
   {
@@ -224,7 +224,7 @@ export const SLIDES = [
     kind: "tiles",
     key: "askByRight",
     title: "Must the type already be allowed?",
-    muted: "By-right is the visit gate. A variance fight is a different week.",
+    muted: "Already allowed means you are not spending this week on a zoning fight.",
     options: [
       { v: "skip", lab: "Doesn't matter" },
       { v: "prefer", lab: "Prefer already allowed" },
@@ -236,7 +236,7 @@ export const SLIDES = [
     kind: "multi",
     key: "askLand",
     title: "Whose land?",
-    muted: "Empty pick means any city vacant lot in this file. Private tax-delinquent stock is not in the file.",
+    muted: "Empty pick means any empty city lot in this file. Private lots are not included.",
     options: LAND_OPTS.map((o) => ({ v: o.v, lab: o.lab })),
   },
   {
@@ -245,7 +245,7 @@ export const SLIDES = [
     key: "askCluster",
     max: 2,
     title: "Isolated lot or a cluster?",
-    muted: "CDCs assemble scale from nearby city lots. We count other vacant lots within about 220 feet.",
+    muted: "Nearby empty city lots are easier to combine. We count other vacant lots within about 220 feet.",
     labels: ["Doesn't matter", "Prefer a neighbor lot", "Must have a cluster"],
   },
   {
@@ -253,7 +253,7 @@ export const SLIDES = [
     kind: "tiles",
     key: "askWho",
     title: "Who should this housing serve?",
-    muted: "Tract typicals, not a named future tenant.",
+    muted: "What people nearby typically pay and earn. Not a named future tenant.",
     options: [
       { v: "renters", lab: "People who already rent nearby" },
       { v: "lower", lab: "Lower income than Pittsburgh typical" },
@@ -278,9 +278,9 @@ export const SLIDES = [
     kind: "tiles",
     key: "askFlood",
     title: "Flood",
-    muted: "Live FEMA NFHL at the point, not a survey. Skip drops special flood hazard lots.",
+    muted: "Flood at this point from the live flood map. Skip drops lots in the flood hazard area.",
     options: [
-      { v: "skip", lab: "Skip special flood hazard" },
+      { v: "skip", lab: "Skip flood hazard lots" },
       { v: "warn", lab: "Show it and warn" },
       { v: "ignore", lab: "Ignore" },
     ],
@@ -290,7 +290,7 @@ export const SLIDES = [
     kind: "tiles",
     key: "askSlope",
     title: "Hillside",
-    muted: "City 25% or greater slope polygons at the point.",
+    muted: "Steep hills the city already mapped. Skip drops those lots.",
     options: [
       { v: "skip", lab: "Skip 25%+ slope" },
       { v: "warn", lab: "Warn only" },
@@ -301,7 +301,7 @@ export const SLIDES = [
     id: "bus",
     kind: "bus",
     title: "How close to a bus stop?",
-    muted: "Feet to a Port Authority stop. Access, not carbon kilograms.",
+    muted: "Walking distance to a bus stop.",
     labels: ["Doesn't matter", "Within a half mile", "Within a quarter mile", "Within a 5-minute walk"],
     feet: [0, 2640, 1320, 400],
   },
@@ -311,7 +311,7 @@ export const SLIDES = [
     key: "askTrees",
     max: 2,
     title: "Shade at the curb",
-    muted: "City street trees within 400 feet. Shade, not the heat raster.",
+    muted: "City street trees within about a block. Shade, not air temperature.",
     labels: ["Doesn't matter", "Prefer more trees", "Want trees on the block"],
   },
   {
@@ -319,7 +319,7 @@ export const SLIDES = [
     kind: "tiles",
     key: "askHeat",
     title: "Surface heat",
-    muted: "TPL 2023 Landsat land surface versus the city's mean. Not air temperature.",
+    muted: "How hot the ground is compared with the rest of the city. Not the air you feel.",
     options: [
       { v: "skip", lab: "Skip the hottest pixels (4–5)" },
       { v: "warn", lab: "Show it and warn" },
@@ -330,10 +330,10 @@ export const SLIDES = [
     id: "lihtc",
     kind: "tiles",
     key: "askLihtc",
-    title: "Tax-credit geography",
-    muted: "Nearest mapped HUD LIHTC project. QAP is a separate competition.",
+    title: "Nearby tax-credit apartments?",
+    muted: "Mapped affordable apartments that used tax credits. A separate contest from this walk list.",
     options: [
-      { v: "near", lab: "Stay near existing LIHTC" },
+      { v: "near", lab: "Stay near existing tax-credit apartments" },
       { v: "avoid", lab: "Avoid stacking on a project" },
       { v: "skip", lab: "Ignore" },
     ],

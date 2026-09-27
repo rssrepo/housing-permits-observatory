@@ -1,5 +1,5 @@
 import { loadSession, saveSession, signIn, signOut, DEMO } from "./auth.js?v=cdc29";
-import { answerQuery, ASK_PROMPTS } from "./ask.js?v=cdc48";
+import { answerQuery, ASK_PROMPTS } from "./ask.js?v=cdc53";
 import {
   FACTOR_LABELS,
   FACTORS,
@@ -12,14 +12,14 @@ import {
   readField,
   scoreSite,
   normalizeWeights,
-} from "./scoring.js?v=cdc48";
+} from "./scoring.js?v=cdc51";
 import {
   VERDICT_LABEL,
   buildPairing,
   affordHtml,
-  groupVisitsByTract,
   investLotHtml,
-  tractInvestHead,
+  investBest,
+  sortInvestLots,
   assemblyNote,
   compareInsight,
   scenarioInsight,
@@ -46,7 +46,7 @@ import {
   walkChipState,
   walkChipsOn,
   walkLine,
-} from "./match.js?v=cdc48";
+} from "./match.js?v=cdc56";
 import {
   ASK_N,
   LAND_OPTS,
@@ -56,7 +56,7 @@ import {
   restoreAsk,
   snapshotAsk,
   syncMix,
-} from "./onboard.js?v=cdc29";
+} from "./onboard.js?v=cdc31";
 
 const root = document.getElementById("app");
 let SITES = [];
@@ -113,19 +113,20 @@ function layoutPublic(inner) {
 
 function layoutApp(session, inner, current) {
   const links = [
-    ["/city", "Home"],
+    ["/home", "Home"],
+    ["/city", "City map"],
     ["/match", "Visits"],
     ["/invest", "Investment"],
     ["/steer", "Dashboard"],
     ["/pipeline", "Find a lot"],
     ["/compare", "Compare"],
-    ["/scorecard", "CDC screen"],
-    ["/briefing", "Briefing room"],
+    ["/scorecard", "This lot"],
+    ["/briefing", "How it works"],
     ["/account", "Account"],
   ];
   return `
     <header class="nav">
-      <a class="brand" href="#/city"><span class="mark"></span> Parcel Fit</a>
+      <a class="brand" href="#/home"><span class="mark"></span> Parcel Fit</a>
       <span class="small">${session.org} · ${session.name}</span>
       <button class="pill ghost" id="out">Sign out</button>
     </header>
@@ -278,40 +279,50 @@ function enterDemo() {
     name: DEMO.name,
     org: DEMO.org,
   });
-  go(s.onboarded ? "/city" : "/onboarding");
+  go(s.onboarded ? "/home" : "/onboarding");
 }
 
 function viewLanding() {
   root.innerHTML = layoutPublic(`
     <section class="hero">
-      <span class="eyebrow">Pittsburgh · city-owned vacant lots</span>
-      <h1>Which lots are worth walking this week?</h1>
-      <p class="lede">This is a walk list for CDC staff. 3,260 public vacant lots. You save the housing type and the neighborhoods. Home is the city map. Visits is the list. Investment asks whether a Zillow neighborhood typical covers a build against 2024-2025 vacant-lot land.</p>
+      <span class="eyebrow">Pittsburgh · empty lots the city owns</span>
+      <h1>Which lots should you walk this week?</h1>
+      <p class="lede">Pick a kind of building and a neighborhood. We show empty city lots that already allow it.</p>
       <div class="cta-row">
         <a class="pill" href="#/demo">Start as Hill District demo</a>
         <a class="pill ghost" href="#/login">Sign in</a>
       </div>
     </section>
-    <div class="bento">
+    <div class="grid2">
       <article class="card">
-        <p class="eyebrow">After you sign in</p>
-        <h3>The map is home.</h3>
-        <p class="muted">A prompt at the top holds last week's type and places. Keep them, change them, or open Visits. Private lots and tax sales are not in this file.</p>
+        <p class="eyebrow">Use it to</p>
+        <h3>Find empty lots where you work</h3>
+        <p class="muted">The city owns thousands of vacant lots. You choose the neighborhoods you will actually visit.</p>
       </article>
       <article class="card">
-        <p class="eyebrow">On each lot</p>
-        <h3>What you can build, and what sale looks like.</h3>
-        <p class="muted">Zoning says what is already allowed. Zillow's typical finished home in the neighborhood sits next to this PIN's land from 2024-2025 vacant-lot sales, then HUD's HOME ceiling. That ceiling is a subsidy cap, not a contractor's bid.</p>
+        <p class="eyebrow">Use it to</p>
+        <h3>See if a house is already allowed</h3>
+        <p class="muted">Some lots already allow a two-family house or a small apartment. Those are the ones worth walking first.</p>
+      </article>
+      <article class="card">
+        <p class="eyebrow">Use it to</p>
+        <h3>Look at the city in 3D</h3>
+        <p class="muted">Spin the map. Color lots by flood, steep hills, trees, or a nearby bus stop.</p>
+      </article>
+      <article class="card">
+        <p class="eyebrow">Use it to</p>
+        <h3>Ask if building here could pay for itself</h3>
+        <p class="muted">We show what nearby homes sell for, what this empty lot might cost, and a simple build cost. Help from a housing subsidy only if you still come up short.</p>
       </article>
     </div>
-    <p class="footer">City of Pittsburgh vacant lots via WPRDC. Zoning from Chapter 911. Nearby home value is Zillow ZHVI. Land is 2024-2025 vacant-lot sales.</p>
+    <p class="footer">City vacant-lot records, recent empty-lot sales, and typical nearby home prices.</p>
   `);
 }
 
 function viewLogin() {
   root.innerHTML = layoutPublic(`
     <div class="auth-box card">
-      <p class="eyebrow">Workspace</p>
+      <p class="eyebrow">Sign in</p>
       <h2 class="serif">Sign in to Parcel Fit</h2>
       <p class="muted">Demo: ${DEMO.email} / ${DEMO.password}</p>
       <form id="login">
@@ -341,7 +352,7 @@ function viewLogin() {
       sessionStorage.removeItem(VISIT_OK);
       if (s.onboarded && s.missionSet) persistWalk(s);
       saveSession(s);
-      go(s.onboarded ? "/city" : "/onboarding");
+      go(s.onboarded ? "/home" : "/onboarding");
       render();
     } catch (err) {
       document.getElementById("err").textContent = err.message;
@@ -597,13 +608,42 @@ function viewOnboarding() {
     persistWalk(s);
     saveSession(s);
     markVisitOk();
-    go("/city");
+    go("/home");
     render();
   };
 }
 
 function siteById(id) {
-  return SITES.find((s) => s.site_id === id) || null;
+  const want = String(id || "").trim();
+  if (!want) return null;
+  const pinHit = SITES.find((s) => String(s.pin || "") === want);
+  if (pinHit) return pinHit;
+  const compact = want.replace(/^pin-/i, "").replace(/[^a-z0-9]/gi, "").toUpperCase();
+  const pinCompact = SITES.find((s) => String(s.pin || "").replace(/[^a-z0-9]/gi, "").toUpperCase() === compact);
+  if (pinCompact) return pinCompact;
+  const hits = SITES.filter((s) => s.site_id === want);
+  if (hits.length === 1) return hits[0];
+  return null;
+}
+
+function pinWalk(session, siteId, typology) {
+  const site = siteById(siteId);
+  if (!session || !site) return null;
+  const t = typology && TYPOLOGIES.includes(typology) ? typology : leadTypeFor(site, session);
+  session.extraWalks = [
+    ...(session.extraWalks || []).filter((x) => x.siteId !== site.site_id && x.siteId !== site.pin),
+    { siteId: site.site_id, typology: t },
+  ];
+  session.lastSiteId = site.site_id;
+  session.visitsAsked = true;
+  return { site, typology: t };
+}
+
+function goWalk(session, siteId, typology) {
+  const pinned = pinWalk(session, siteId, typology);
+  if (!pinned) return;
+  saveSession(session);
+  go(`/match/${pinned.site.site_id}/${pinned.typology}`);
 }
 
 function lotOptionLabel(s) {
@@ -664,9 +704,10 @@ function walkPromptHtml(session) {
     return `<article class="card home-prompt">
       <p class="eyebrow">This week's walk</p>
       <h2 class="serif">No walk is saved yet</h2>
-      <p>The map is every city vacant lot. Set the housing type and neighborhoods so Visits and Investment know what to staff. Those answers stay on this browser.</p>
+      <p>The map shows every empty city lot. Tell us what you want to build and where, so Visits knows which ones to staff.</p>
       <div class="cta-row">
         <button class="pill" id="walk-set" type="button">Set this week's walk</button>
+        <a class="pill ghost" href="#/city">Open city map</a>
       </div>
     </article>`;
   }
@@ -700,10 +741,11 @@ function walkPromptHtml(session) {
     <p class="eyebrow">This week's walk</p>
     <div class="tag-row">${tags}</div>
     <h2 class="serif">${title}</h2>
-    <p>${sale}${landP} Saved on this browser. The map is the whole city. Visits uses this cut.</p>
+    <p>${sale}${landP} Saved on this computer. The map is the whole city. Visits is this week's list.</p>
     <div class="cta-row">
       ${keepBtn}
       <button class="pill ghost" id="walk-change" type="button">Change the walk</button>
+      <a class="pill" href="#/city">Open city map</a>
       <a class="pill ghost" href="#/match">Open visits</a>
     </div>
   </article>`;
@@ -790,11 +832,11 @@ function viewMission(session) {
     session,
     `
     <p class="eyebrow">This month</p>
-    <h2 class="serif">What are you staffing this month?</h2>
-    <p class="muted">This is the CDC targeting screen: public land in the neighborhoods you staff, a housing type that is already allowed, then a visit list. Private tax-delinquent lots are not in this file.</p>
+    <h2 class="serif">What are you walking this month?</h2>
+    <p class="muted">Pick neighborhoods and a kind of building. We only list empty lots the city owns. Private lots are not in this file.</p>
     <article class="card">
       <h3>Where are you walking?</h3>
-      <p class="muted">All Pittsburgh, or the neighborhoods your CDC will actually visit.</p>
+      <p class="muted">All of Pittsburgh, or only the neighborhoods you will actually visit.</p>
       <div id="places" class="chip-row"></div>
       <label>More neighborhoods</label>
       <select id="more">
@@ -804,7 +846,7 @@ function viewMission(session) {
     </article>
     <article class="card" style="margin-top:1rem">
       <h3>What do you want to put on the ground?</h3>
-      <p class="muted">Homes and workplaces. A pairing is one type on one lot. Office, commercial, and industrial mix use district, lot, and bus, not rent.</p>
+      <p class="muted">A house, a small apartment, a shop, or a workplace. Pick at least one.</p>
       ${TYPOLOGIES.map(
         (v) =>
           `<button type="button" class="choice ${pickedTypes.has(v) ? "on" : ""}" data-type="${v}"><strong>${TYPOLOGY_LABELS[v]}</strong><span class="muted"> ${TYPOLOGY_HINTS[v]}</span></button>`
@@ -903,7 +945,7 @@ function viewMission(session) {
     persistWalk(session);
     saveSession(session);
     markVisitOk();
-    go("/city");
+    go("/home");
     render();
   };
 }
@@ -1149,6 +1191,12 @@ function visitDeck(session) {
 
 function viewMatch(session) {
   if (!session.missionSet) return viewMission(session);
+  const hash = location.hash.replace(/^#/, "");
+  const segs = hash.split("/").filter(Boolean);
+  if (segs[0] === "match" && segs[1]) {
+    pinWalk(session, segs[1], segs[2]);
+    saveSession(session);
+  }
   if (!session.visitsAsked) return viewVisited(session);
   if (!SITES.length) {
     root.innerHTML = layoutApp(session, `<p class="muted">Loading lots…</p>`, "/match");
@@ -1162,15 +1210,22 @@ function viewMatch(session) {
     session
   );
   const visible = visitDeck(session);
-  const hash = location.hash.replace(/^#/, "");
-  const segs = hash.split("/").filter(Boolean);
   let featured;
-  if (segs[0] === "match" && segs[1] && segs[2]) {
+  if (segs[0] === "match" && segs[1]) {
     const site = siteById(segs[1]);
-    if (site) featured = buildPairing(site, segs[2], session);
+    if (site) featured = buildPairing(site, segs[2] || leadTypeFor(site, session), session);
   }
   if (!featured) {
     featured = visible[0] || featuredPairing(rankedWalk, session.lastPairing);
+  }
+  if (featured && !visible.some((p) => p.site.site_id === featured.site.site_id)) {
+    visible.unshift(featured);
+  } else if (featured) {
+    const idxHit = visible.findIndex((p) => p.site.site_id === featured.site.site_id);
+    if (idxHit > 0) {
+      visible.splice(idxHit, 1);
+      visible.unshift(featured);
+    } else if (idxHit === 0) visible[0] = featured;
   }
   if (!visible.length) {
     const chipEmpty = walkChipsOn(session);
@@ -1207,7 +1262,6 @@ function viewMatch(session) {
     }
     return;
   }
-  if (featured && !visible.some((p) => p.key === featured.key)) featured = visible[0];
   session.lastPairing = featured.key;
   session.lastSiteId = featured.site.site_id;
   saveSession(session);
@@ -1219,7 +1273,7 @@ function viewMatch(session) {
     `
     <p class="eyebrow">Your visits</p>
     <h2 class="serif" style="margin:0.2rem 0 0.35rem">${greeting()}, ${session.name.split(" ")[0]}. Here is what to do.</h2>
-    <p class="muted">${placesLabel(session)} · ${typeListLabel(missionTypesOf(session))}${session.missionForSale !== false ? " · for sale" : ""}${session.missionByRight !== false ? " · by-right only" : ""}${(session.mapMatchIds || []).length ? ` · ${session.mapMatchIds.length} lots from the map cut` : ""} · <a href="#/invest">Investment for this list</a></p>
+      <p class="muted">${placesLabel(session)} · ${typeListLabel(missionTypesOf(session))}${session.missionForSale !== false ? " · for sale" : ""}${session.missionByRight !== false ? " · already allowed" : ""}${(session.mapMatchIds || []).length ? ` · ${session.mapMatchIds.length} lots from the map` : ""} · <a href="#/invest">See if a sale could cover a build</a></p>
     ${walkFilterBar(session)}
     <p><button class="pill ghost" id="retarget" type="button">Change this month's cut</button>${(session.mapMatchIds || []).length ? ` <button class="pill ghost" id="clear-map-cut" type="button">Clear map filters</button>` : ""}</p>
 
@@ -1251,7 +1305,7 @@ function viewMatch(session) {
 
     <section class="section" style="padding-top:1.4rem">
       <h3 class="serif">Your visits</h3>
-      <p class="muted">This week's walk, not every vacant lot in the file. ${visible.length} on the list. Add more from Find a lot.</p>
+      <p class="muted">Lots you added sit first, then this week's cut. ${visible.length} on the list. Add more from the city map or Find a lot.</p>
       <div class="match-deck">
         ${visible
           .map((p, i) => {
@@ -1329,7 +1383,7 @@ function viewInvest(session) {
       `
       <p class="eyebrow">Investment</p>
       <h2 class="serif">No visits on this cut</h2>
-      <p class="muted">Land, nearby finished home, and the HOME ceiling follow your visits list. Add lots on Visits or Find a lot.</p>
+      <p class="muted">Add lots on Visits or Find a lot first.</p>
       <div class="cta-row"><a class="pill" href="#/match">Your visits</a></div>
     `,
       "/invest"
@@ -1337,28 +1391,60 @@ function viewInvest(session) {
     bindSignOut();
     return;
   }
+  const nGo = visible.filter((p) => investBest(p.site).rank === 0).length;
+  const nWarn = visible.filter((p) => investBest(p.site).rank === 1).length;
+  const nBad = visible.filter((p) => investBest(p.site).rank >= 2).length;
+  const cut = ["go", "warn", "bad", "all"].includes(session.investCut) ? session.investCut : "go";
+  const shown = visible.filter((p) => {
+    const r = investBest(p.site).rank;
+    if (cut === "go") return r === 0;
+    if (cut === "warn") return r === 1;
+    if (cut === "bad") return r >= 2;
+    return true;
+  });
+  const sorted = sortInvestLots(shown);
+  const emptyLine =
+    cut === "go"
+      ? "None of this week's lots have nearby sale covering land plus a simple house build. Try subsidy walk."
+      : cut === "warn"
+        ? "None of this week's lots have a gap a housing subsidy could fill."
+        : cut === "bad"
+          ? "None of this week's lots are too short even with the usual subsidy cap."
+          : "Nothing on this cut.";
+  const chips = [
+    ["go", `Most possible (${nGo})`],
+    ["warn", `Subsidy could close (${nWarn})`],
+    ["bad", `Still too short (${nBad})`],
+    ["all", `Every visit (${visible.length})`],
+  ]
+    .map(
+      ([id, lab]) =>
+        `<button type="button" class="choice chip${cut === id ? " on" : ""}" data-invest-cut="${id}">${lab}</button>`
+    )
+    .join("");
   root.innerHTML = layoutApp(
     session,
     `
     <p class="eyebrow">Investment</p>
-    <h2 class="serif">Will a typical sale cover a build?</h2>
-    <p class="lede">These are the ${visible.length} lots on this week's walk. First the neighborhood sale price. Then each parcel's land. Then what happens if you build one house, two, or four.</p>
-    <div class="invest-stack">
-      ${groupVisitsByTract(visible)
-        .map(
-          (g) => `<section class="card invest-tract">
-            ${tractInvestHead(g.site)}
-            <div class="invest-lots">
-              ${g.lots.map((p) => investLotHtml(p)).join("")}
-            </div>
-          </section>`
-        )
-        .join("")}
-    </div>
+    <h2 class="serif">Could selling nearby homes cover a build?</h2>
+    <p class="lede">Sorted by leftover after land plus a simple house build. Most possible means nearby sale already covers that stack on at least one house count, no subsidy required. We do not make construction cheaper to force a yes.</p>
+    <div class="chip-row invest-cuts">${chips}</div>
+    ${
+      sorted.length
+        ? `<div class="invest-stack">${sorted.map((p) => `<section class="card invest-tract">${investLotHtml(p)}</section>`).join("")}</div>`
+        : `<p class="muted">${emptyLine}</p>`
+    }
   `,
     "/invest"
   );
   bindSignOut();
+  document.querySelectorAll("[data-invest-cut]").forEach((btn) => {
+    btn.onclick = () => {
+      session.investCut = btn.dataset.investCut;
+      saveSession(session);
+      viewInvest(session);
+    };
+  });
 }
 
 function monthFit(site, session) {
@@ -1405,7 +1491,7 @@ function viewPipeline(session) {
     `
     <p class="eyebrow">Find a lot</p>
     <h2 class="serif">Add a lot to your visits</h2>
-    <p class="muted">Search a full address or PIN. Each card says whether the lot fits this month's cut. Add as many as you will actually walk.${(session.mapMatchIds || []).length ? ` Map filters are on: ${session.mapMatchIds.length} lots.` : ""}</p>
+    <p class="muted">Search an address or tax ID. Each card says whether the lot fits this week.${(session.mapMatchIds || []).length ? ` Map filters are on: ${session.mapMatchIds.length} lots.` : ""}</p>
     <div class="filters card">
       <label>Neighborhood</label>
       <select id="fn"><option value="all">All Pittsburgh</option>${neighborhoods
@@ -1466,9 +1552,7 @@ function viewPipeline(session) {
         if (had) {
           session.extraWalks = (session.extraWalks || []).filter((x) => x.siteId !== id);
         } else {
-          const site = siteById(id);
-          const typology = leadTypeFor(site, session);
-          session.extraWalks = [...(session.extraWalks || []).filter((x) => x.siteId !== id), { siteId: id, typology }];
+          pinWalk(session, id);
         }
         saveSession(session);
         paintList();
@@ -1525,6 +1609,7 @@ function viewSite(session, id) {
     ${typicalRentLine(site) ? `<p>${typicalRentLine(site)}</p>` : ""}
     ${affordHtml(site, visits[0]?.typology || "duplex")}
     ${walkActionsHtml(site)}
+    <div class="cta-row"><button type="button" class="pill" id="add-walk">Add to visits</button></div>
     ${
       signals.length
         ? `<h3 class="serif">Signals</h3>
@@ -1558,6 +1643,8 @@ function viewSite(session, id) {
   );
   bindSignOut();
   bindCopyPins();
+  const addWalk = document.getElementById("add-walk");
+  if (addWalk) addWalk.onclick = () => goWalk(session, site.site_id);
 }
 
 function compareTypeOf(session) {
@@ -1602,7 +1689,7 @@ function mixSlidersHtml(session) {
   const n = normalizeWeights(raw);
   return `<div class="scen-mix card">
     <p class="eyebrow">Change the mix</p>
-    <p class="muted">${mixPointer(raw)} Moving a slider is a value judgment. The factor scores stay the file.</p>
+    <p class="muted">${mixPointer(raw)} Sliding is what you care about. The lot numbers stay the same.</p>
     ${FACTORS.map(
       (k) => `<label class="algo-row">${FACTOR_LABELS[k]}
         <input type="range" min="0" max="100" step="5" data-wk="${k}" value="${Math.round(Number(raw[k] || 0))}" />
@@ -1672,7 +1759,7 @@ function viewCompare(session) {
       return `<article class="card insight" id="insight"><h2 class="serif pairing-title">${ins.headline}</h2></article>`;
     }
     return `<article class="card insight" id="insight">
-      <p class="eyebrow">Scenarios, not a winner from the sky</p>
+      <p class="eyebrow">Two kinds of building</p>
       <h2 class="serif pairing-title">${ins.headline}</h2>
       ${(ins.reasons || []).map((r) => `<p>${r}</p>`).join("")}
       ${splitLegendHtml(ins.winner, session)}
@@ -1719,7 +1806,7 @@ function viewCompare(session) {
       `
       <p class="eyebrow">Compare</p>
       <h2 class="serif">Two housing types on a real lot</h2>
-      <p class="muted">This is the brief. Same place, two scenarios, your mix, and what the file cannot claim.</p>
+      <p class="muted">This is the brief. Same place, two kinds of building, and what we cannot claim.</p>
       ${modeBar}
       <label>This lot</label>
       <select id="sc-site">${optionPool.map((s) => `<option value="${s.site_id}" ${s.site_id === site.site_id ? "selected" : ""}>${lotOptionLabel(s)}</option>`).join("")}</select>
@@ -1876,15 +1963,16 @@ function viewScorecard(session, siteId) {
     session,
     `
     <p class="eyebrow">This lot</p>
-    <h2 class="serif">Would a Pittsburgh CDC put this lot on the list?</h2>
-    <p class="muted">Tags first, then strengths versus watch-outs, then the five CDC filters. Home value is Zillow ZHVI. Land is 2024-2025 vacant-lot sales. Open More for the source sentence. Ranking rules are in MATCHING.md.</p>
+    <h2 class="serif">Would you put this lot on the list?</h2>
+    <p class="muted">Tags, then what helps, then what to watch. Nearby home price, this lot's land, and a simple build cost. Open More if you want the source.</p>
     <label>Lot</label>
     <select id="op-site">${pool
       .map((s) => `<option value="${s.site_id}" ${s.site_id === site.site_id ? "selected" : ""}>${lotOptionLabel(s)}</option>`)
       .join("")}</select>
     ${scorecardHtml(site, SITES, session)}
     <div class="cta-row" style="margin-top:1rem">
-      <button type="button" class="pill" id="op-copy">Copy this lot</button>
+      <button type="button" class="pill" id="op-walk">Add to visits</button>
+      <button type="button" class="pill ghost" id="op-copy">Copy this lot</button>
       ${walkActionsHtml(site)}
     </div>
   `,
@@ -1894,6 +1982,7 @@ function viewScorecard(session, siteId) {
     const id = document.getElementById("op-site").value;
     go(`/scorecard/${id}`);
   };
+  document.getElementById("op-walk").onclick = () => goWalk(session, site.site_id);
   document.getElementById("op-copy").onclick = async () => {
     try {
       await navigator.clipboard.writeText(report);
@@ -1907,6 +1996,42 @@ function viewScorecard(session, siteId) {
 }
 
 let disposeCity = null;
+
+function viewHome(session) {
+  if (session.missionSet && !session.lastWalk) {
+    persistWalk(session);
+    saveSession(session);
+  }
+  const first = (session.name || "there").split(" ")[0];
+  root.innerHTML = layoutApp(
+    session,
+    `
+    <p class="eyebrow">Home</p>
+    <h2 class="serif" style="margin:0.2rem 0 0.85rem">${greeting()}, ${first}.</h2>
+    ${walkPromptHtml(session)}
+    <div class="grid2 home-desk">
+      <article class="card">
+        <p class="eyebrow">3D map</p>
+        <h3 class="serif">City map</h3>
+        <p class="muted">See every empty city lot. Color by flood, hills, trees, or the bus.</p>
+        <div class="cta-row"><a class="pill" href="#/city">Open city map</a></div>
+      </article>
+      <article class="card">
+        <p class="eyebrow">This week's list</p>
+        <h3 class="serif">Visits and investment</h3>
+        <p class="muted">The list of lots to walk this week, and whether a nearby sale could cover a simple build.</p>
+        <div class="cta-row">
+          <a class="pill ghost" href="#/match">Open visits</a>
+          <a class="pill ghost" href="#/invest">Investment</a>
+        </div>
+      </article>
+    </div>
+  `,
+    "/home"
+  );
+  bindSignOut();
+  bindHomePrompt(session);
+}
 
 function viewCity(session) {
   if (disposeCity) {
@@ -1928,30 +2053,26 @@ function viewCity(session) {
   const sites = visits.map((p) => p.site);
   const focus = siteById(session.lastSiteId);
   if (focus && !sites.some((s) => s.site_id === focus.site_id)) sites.unshift(focus);
-  if (session.missionSet && !session.lastWalk) {
-    persistWalk(session);
-    saveSession(session);
-  }
   root.innerHTML = layoutApp(
     session,
     `
-    ${walkPromptHtml(session)}
-    <p class="eyebrow">Home</p>
-    <h2 class="serif">City vacant lots on the terrain</h2>
-    <p class="muted">Color is one layer. Every class in the legend can be stacked. Matching pegs stay on the map, and that cut can drive Visits and Find a lot.</p>
-    <div class="city-desk">
-      <div class="city-stage" id="city-stage"></div>
-      <aside class="city-rail" id="city-rail"></aside>
+    <div class="city-page">
+      <p class="eyebrow">City map</p>
+      <h2 class="serif">Empty city lots, in 3D</h2>
+      <p class="muted">Pick a color. Click a class in the list to keep those lots. You can stack more than one filter.</p>
+      <div class="city-desk">
+        <div class="city-stage" id="city-stage"></div>
+        <aside class="city-rail" id="city-rail"></aside>
+      </div>
+      <p class="small">Buildings are simple boxes. Flood marks the lot, not a surveyed flood map. Confirm on Google Maps before you walk.</p>
     </div>
-    <p class="small">Buildings are schematic boxes from the city I3S plan. Flood discs mark the lot, not the FIRM boundary. Cluster size is nearby city lots, not a surveyed assembly. Confirm on Maps before you walk.</p>
   `,
     "/city"
   );
   bindSignOut();
-  bindHomePrompt(session);
   const host = document.getElementById("city-stage");
   const rail = document.getElementById("city-rail");
-  import("./city3d.js?v=cdc39")
+  import("./city3d.js?v=cdc52")
     .then(({ mountCity }) =>
       mountCity(host, {
         lots: SITES,
@@ -1962,6 +2083,7 @@ function viewCity(session) {
         rail,
         mapFilters: session.mapFilters || {},
         onPick: (id) => go(`/scorecard/${id}`),
+        onAddVisit: (id) => goWalk(loadSession() || session, id),
         formatCompare: (a, b) => mapCompareHtml(a, b, session),
         onDossier: (id) => go(`/scorecard/${id}`),
         onFullCompare: (a, b) => go(`/compare/${a}/${b}`),
@@ -1979,12 +2101,23 @@ function viewCity(session) {
         onMapFilter: (stacked, ids, goList) => {
           const s = loadSession();
           if (!s) return;
+          if (goList && ids && ids.length) {
+            ids.slice(0, 80).forEach((id) => pinWalk(s, id));
+            saveSession({
+              ...s,
+              mapFilters: stacked,
+              mapMatchIds: null,
+            });
+            const first = siteById(ids[0]);
+            const t = first ? leadTypeFor(first, s) : "duplex";
+            go(`/match/${first ? first.site_id : ids[0]}/${t}`);
+            return;
+          }
           saveSession({
             ...s,
             mapFilters: stacked,
             mapMatchIds: ids,
           });
-          if (goList) go("/match");
         },
       })
     )
@@ -2106,7 +2239,7 @@ function viewSteer(session) {
     <div class="dash-page">
     <p class="eyebrow">Dashboard</p>
     <h2 class="serif">${n(c.n)} city vacant lots</h2>
-    <p class="muted">Each pie is the whole file. One lot, one slice.</p>
+    <p class="muted">${n(c.n)} empty lots the city owns. Each pie is the whole list.</p>
 
     <div class="dash-pies">
       <article class="card">
@@ -2120,8 +2253,8 @@ function viewSteer(session) {
         ${dashDonut(land, n(c.n), "lots")}
       </article>
       <article class="card">
-        <h3 class="serif">LIHTC</h3>
-        <p class="small">Near is within 1,320 ft of a mapped HUD point.</p>
+        <h3 class="serif">Tax-credit apartments nearby</h3>
+        <p class="small">Near is within a quarter mile of a mapped project.</p>
         ${dashDonut(tax, n(c.n), "lots")}
       </article>
     </div>
@@ -2142,7 +2275,7 @@ function viewSteer(session) {
     </article>
 
     <div class="cta-row">
-      <a class="pill" href="#/city">Open the map</a>
+      <a class="pill" href="#/city">Open city map</a>
       <a class="pill ghost" href="#/match">Your visits</a>
     </div>
     </div>
@@ -2153,31 +2286,126 @@ function viewSteer(session) {
 }
 
 function viewBriefing(session) {
+  const sources = [
+    {
+      t: "City empty lots",
+      p: "About 3,260 vacant city-owned parcels: address, PIN, neighborhood, sale status, who holds the land, lot size, and the map pin.",
+      href: "https://data.wprdc.org/dataset/city-owned-properties",
+      lab: "WPRDC City-Owned Properties",
+    },
+    {
+      t: "Already allowed",
+      p: "Walk / wait / skip comes from Pittsburgh Zoning Code Chapter 911, read against the district listed on the lot. Not a zoning certificate.",
+      href: "https://ecode360.com/45476528",
+      lab: "Chapter 911 primary uses",
+    },
+    {
+      t: "Who lives nearby",
+      p: "Census ACS 2024 5-year via Census Reporter: renters, rent, income, rent strain, and a tract typical home price when Zillow has no name match. Blank stays blank.",
+      href: "https://censusreporter.org",
+      lab: "Census Reporter ACS 2024 5-year",
+    },
+    {
+      t: "Nearby finished homes",
+      p: "Zillow Home Value Index by neighborhood, middle third of houses and condos, through August 2026. Typical finished home, not this vacant lot and not a Zestimate.",
+      href: "https://www.zillow.com/research/data/",
+      lab: "Zillow Research ZHVI",
+    },
+    {
+      t: "Land from recent sales",
+      p: "Allegheny County property sales on WPRDC for 2024 and 2025. Pittsburgh vacant (0-address) lots that sat on the market, scaled to this lot's square feet.",
+      href: "https://data.wprdc.org/dataset/real-estate-sales",
+      lab: "WPRDC real estate sales",
+    },
+    {
+      t: "2012 tax-roll land",
+      p: "County FAIRMARKETLAND kept as a footnote. Allegheny still uses a 2012 base year. Not the 2024-2025 sale rate.",
+      href: "https://data.wprdc.org/dataset/property-assessments",
+      lab: "WPRDC property assessments",
+    },
+    {
+      t: "Housing subsidy ceiling",
+      p: "HOME 2-bedroom max $261,595 for Pittsburgh. That is the most that program can put in, not the cost to build.",
+      href: "https://www.alleghenycounty.us/files/assets/county/v/2/government/economic-development/documents/housing/achdf-2025-addendum.pdf",
+      lab: "Allegheny County 2025 HOME addendum",
+    },
+    {
+      t: "Bus",
+      p: "Feet to the nearest Port Authority stop.",
+      href: "https://data.wprdc.org/dataset/prt-of-allegheny-county-transit-stops",
+      lab: "WPRDC PRT stops",
+    },
+    {
+      t: "Flood",
+      p: "Live FEMA flood map at the lot point. An older 2014 city extract on WPRDC is also joined. Confirm the printed flood map before you walk a river lot.",
+      href: "https://www.fema.gov/flood-maps/national-flood-hazard-layer",
+      lab: "FEMA National Flood Hazard Layer",
+    },
+    {
+      t: "2014 city flood extract",
+      p: "City of Pittsburgh flood-zone polygons on WPRDC. Older than the live FEMA layer. Kept as a second reading.",
+      href: "https://data.wprdc.org/dataset/2014-fema-flood-zones",
+      lab: "WPRDC 2014 flood zones",
+    },
+    {
+      t: "Steep hills",
+      p: "City polygons for 25% or steeper slope. Point in the polygon, not a surveyed grade.",
+      href: "https://data.wprdc.org/dataset/25-or-greater-slope",
+      lab: "WPRDC 25% slope",
+    },
+    {
+      t: "Hotter ground",
+      p: "Trust for Public Land Heat Severity USA 2023. Summer land surface versus the city mean. Not air temperature. Not a health score.",
+      href: "https://www.tpl.org/heat-severity",
+      lab: "TPL Heat Severity USA 2023",
+    },
+    {
+      t: "Street trees",
+      p: "City DPW tree inventory on WPRDC (last big refresh about 2020). Count within 400 feet, plus the city's tree carbon calculator on those trees, not on a new building.",
+      href: "https://data.wprdc.org/dataset/city-trees",
+      lab: "WPRDC city trees",
+    },
+    {
+      t: "Tax-credit apartments nearby",
+      p: "Distance to the nearest mapped HUD Low-Income Housing Tax Credit project in Pittsburgh. A map pin, not an award.",
+      href: "https://www.huduser.gov/portal/datasets/lihtc.html",
+      lab: "HUD LIHTC",
+    },
+    {
+      t: "City map buildings",
+      p: "Simple boxes from a Pittsburgh schematic 3D file. They show the street, not a survey of this vacant lot.",
+      href: null,
+      lab: "Pittsburgh schematic city model",
+    },
+  ];
   root.innerHTML = layoutApp(
     session,
     `
-    <p class="eyebrow">What this is</p>
-    <h2 class="serif">A matchmaker that shows the conflict</h2>
-    <p class="muted">The useful output is not a winner. It is what you get, what you give up, and what this file cannot answer. For planning and economic development, the file is how public vacant land sits against the three tools a city actually holds.</p>
+    <p class="eyebrow">How it works</p>
+    <h2 class="serif">A walk list, not a verdict from the sky</h2>
+    <p class="muted">You see what you get, what you give up, and what this file cannot answer. It does not tell you who gets the unit.</p>
     <div class="grid2">
-      <article class="card"><h3>Zoning</h3><p class="muted">By-right two-family and small apartment on the vacant dump. Visit/Hold/Skip is that gate. Overlays are not encoded.</p></article>
-      <article class="card"><h3>Tax incentives</h3><p class="muted">Nearest HUD LIHTC point. Not TIF, LERTA, KOZ, or a city abatement log.</p></article>
-      <article class="card"><h3>Public land</h3><p class="muted">Sale, URA, Land Bank, CDC reserve. Private land is most of the market and is not in this file.</p></article>
-      <article class="card"><h3>Demand</h3><p class="muted">Census renter share where the tract joined. Blank elsewhere. Not a waitlist.</p></article>
-      <article class="card"><h3>Equity</h3><p class="muted">Rent burden and the gap between typical rent paid and 30% of typical income. Neighborhood strain, not evictions or who gets the new unit.</p></article>
-      <article class="card"><h3>Climate</h3><p class="muted">Live FEMA NFHL at the point. TPL 2023 land-surface heat 1–5 versus the city mean, not air temperature. Street-tree count and the city's tree CO2 calculator within 400 ft. Building operational carbon is still not measured.</p></article>
-      <article class="card"><h3>What a judge should click</h3><p class="muted">Compare: two types on one lot, move the mix, read From the file / Your call / Not claimed. That is the success line. It is not CHAS, jobs, schools, or a carbon kilogram.</p></article>
+      <article class="card"><h3>Already allowed?</h3><p class="muted">Walk / wait / skip is whether a two-family house or small apartment is already allowed on that lot.</p></article>
+      <article class="card"><h3>Whose land?</h3><p class="muted">City sale, URA, Land Bank, or already held for a neighborhood group. Private lots are not in this file.</p></article>
+      <article class="card"><h3>Who lives nearby?</h3><p class="muted">Census rent and income for the area. Blank if we do not have it. Not a waitlist.</p></article>
+      <article class="card"><h3>Could a sale cover a build?</h3><p class="muted">Nearby home prices, this empty lot's land, and a simple build cost. A housing subsidy only if you still come up short.</p></article>
+      <article class="card"><h3>Flood, hills, heat, trees</h3><p class="muted">Flood at the point, steep hills, hotter ground, street trees. Not air temperature. Not a new building's energy use.</p></article>
+      <article class="card"><h3>Try Compare</h3><p class="muted">Two kinds of building on one lot. Move what you care about. Read what is in the file vs what you chose.</p></article>
     </div>
-    <article class="card" style="margin-top:1rem">
-      <h3>Sources</h3>
-      <p><a href="https://data.wprdc.org/dataset/city-owned-properties">City-owned properties (WPRDC)</a></p>
-      <p><a href="https://ecode360.com/45476528">Pittsburgh zoning code, primary uses</a></p>
-      <p>ACS 2024 5-year rent, income, burden, and renter share where the tract joined. Home value on visits uses Zillow ZHVI first.</p>
-      <p><a href="https://www.arcgis.com/home/item.html?id=db5bdb0f0c8c4b85b8270ec67448a0b6">TPL Heat Severity USA 2023</a></p>
-      <p><a href="https://data.wprdc.org/dataset/real-estate-sales">Allegheny County property sales (WPRDC)</a> · 2024-2025 vacant-lot sales, scaled to lot size. County tax roll is still 2012.</p>
-      <p>Zillow Home Value Index by neighborhood (August 2026) · Pittsburgh city typical $239,865</p>
-      <p><a href="https://www.alleghenycounty.us/files/assets/county/v/2/government/economic-development/documents/housing/achdf-2025-addendum.pdf">Allegheny County 2025 HOME 2-bedroom elevator ceiling $261,595</a> · subsidy cap, not a bid</p>
-      <p>PRT stops on the genesis sample only</p>
+    <article class="card" style="margin-top:1.2rem">
+      <h3>Where the numbers come from</h3>
+      <p class="muted">Every public file this desk joined. Missing cells stay blank. We do not copy a neighbor tract. Simple build cost is $180 a square foot for a wood house. That last one is a mid-range assumption, not a bid, and not a public dataset.</p>
+      <div class="source-list">
+        ${sources
+          .map(
+            (s) => `<div class="source-row">
+            <h4>${s.t}</h4>
+            <p>${s.p}</p>
+            ${s.href ? `<p><a href="${s.href}" target="_blank" rel="noopener">${s.lab}</a></p>` : `<p class="muted">${s.lab}</p>`}
+          </div>`
+          )
+          .join("")}
+      </div>
     </article>
   `,
     "/briefing"
@@ -2220,7 +2448,7 @@ function viewAccount(session) {
 function render() {
   try {
     const { path, parts } = route();
-    if (disposeCity && path !== "/city" && path !== "/home") {
+    if (disposeCity && path !== "/city") {
       disposeCity();
       disposeCity = null;
     }
@@ -2236,13 +2464,14 @@ function render() {
     if (path === "/invest") return viewInvest(session);
     if (path === "/pipeline") return viewPipeline(session);
     if (path === "/compare" || path.startsWith("/compare/")) return viewCompare(session);
-    if (path === "/home" || path === "/city") return viewCity(session);
+    if (path === "/home") return viewHome(session);
+    if (path === "/city") return viewCity(session);
     if (path === "/steer") return viewSteer(session);
     if (path === "/scorecard" || path.startsWith("/scorecard/")) return viewScorecard(session, parts[1]);
     if (path === "/briefing") return viewBriefing(session);
     if (path === "/account") return viewAccount(session);
     if (parts[0] === "sites" && parts[1]) return viewSite(session, parts[1]);
-    viewCity(session);
+    viewHome(session);
   } catch (err) {
     console.error(err);
     root.innerHTML = layoutPublic(`

@@ -100,9 +100,9 @@ def zoning_allows(zoned: str) -> tuple[str, str, str, str]:
 
 
 def slug_id(pin: str, address: str) -> str:
-    pin = re.sub(r"\D", "", pin or "")
-    if pin:
-        return f"pin-{pin}"
+    compact = re.sub(r"[^A-Za-z0-9]", "", pin or "")
+    if compact:
+        return f"pin-{compact}"
     slug = re.sub(r"[^a-z0-9]+", "-", (address or "lot").lower()).strip("-")
     return slug[:40] or "lot"
 

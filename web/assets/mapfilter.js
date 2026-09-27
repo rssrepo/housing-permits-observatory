@@ -1,22 +1,22 @@
 import { primaryUse, useAllows } from "./uses.js?v=cdc30";
 
 export const LAYERS = [
-  { id: "mix", lab: "Mix score" },
+  { id: "mix", lab: "Fit" },
   { id: "visits", lab: "Your visits" },
   { id: "path", lab: "Whose land" },
   { id: "flood", lab: "Flood" },
-  { id: "heat", lab: "Surface heat" },
+  { id: "heat", lab: "Hotter ground" },
   { id: "slope", lab: "Hillside" },
-  { id: "use", lab: "By-right" },
+  { id: "use", lab: "Already allowed" },
   { id: "shade", lab: "Street trees" },
-  { id: "credit", lab: "LIHTC nearby" },
+  { id: "credit", lab: "Tax-credit nearby" },
 ];
 
 export const LEGEND = {
   mix: [
-    { id: "high", hex: "#4c6fff", lab: "Stronger mix (62 and up)" },
+    { id: "high", hex: "#4c6fff", lab: "Stronger fit (62 and up)" },
     { id: "mid", hex: "#8aa6ff", lab: "Middle (38 to 61)" },
-    { id: "low", hex: "#c5d0dc", lab: "Weaker mix (under 38)" },
+    { id: "low", hex: "#c5d0dc", lab: "Weaker fit (under 38)" },
     { id: "unk", hex: "#e8e4dc", lab: "Too little data" },
   ],
   visits: [
@@ -31,18 +31,18 @@ export const LEGEND = {
     { id: "other", hex: "#8b95a5", lab: "Other public" },
   ],
   flood: [
-    { id: "sfha", hex: "#3db5c8", lab: "Special flood hazard (NFHL)" },
-    { id: "ok", hex: "#c5d0dc", lab: "Not SFHA / not flagged" },
+    { id: "sfha", hex: "#3db5c8", lab: "Flood hazard" },
+    { id: "ok", hex: "#c5d0dc", lab: "Not flagged for flood" },
   ],
   heat: [
-    { id: "hot", hex: "#e76f51", lab: "Hotter than city mean (4–5)" },
-    { id: "mid", hex: "#d69a30", lab: "Near the mean (3)" },
-    { id: "cool", hex: "#4c6fff", lab: "Cooler than city mean (1–2)" },
+    { id: "hot", hex: "#e76f51", lab: "Hotter ground (4–5)" },
+    { id: "mid", hex: "#d69a30", lab: "About average (3)" },
+    { id: "cool", hex: "#4c6fff", lab: "Cooler ground (1–2)" },
     { id: "unk", hex: "#e8e4dc", lab: "No pixel" },
   ],
   slope: [
-    { id: "steep", hex: "#d69a30", lab: "Inside 25%+ slope polygons" },
-    { id: "ok", hex: "#c5d0dc", lab: "Not in those polygons" },
+    { id: "steep", hex: "#d69a30", lab: "Steep hillside" },
+    { id: "ok", hex: "#c5d0dc", lab: "Not a steep hillside" },
   ],
   shade: [
     { id: "more", hex: "#1d4a32", lab: "More street trees within 400 ft" },
@@ -59,7 +59,7 @@ export const LEGEND = {
     { id: "none", hex: "#c5d0dc", lab: "None of these" },
   ],
   credit: [
-    { id: "near", hex: "#d69a30", lab: "LIHTC within a quarter mile" },
+    { id: "near", hex: "#d69a30", lab: "Tax-credit apartments within a quarter mile" },
     { id: "far", hex: "#c5d0dc", lab: "Farther or unmapped" },
   ],
 };
