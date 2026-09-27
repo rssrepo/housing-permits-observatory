@@ -96,11 +96,28 @@ input, select {
   border-radius: 1rem; border: 1px solid var(--line); background: #fff; cursor: pointer;
 }
 .choice.on { outline: 2px solid var(--accent); }
+.weight-block { margin: 1.1rem 0 1.4rem; }
+.weight-block label { font-size: 1.02rem; color: var(--ink); margin-bottom: 0.35rem; }
+.weight-metric { margin: 0 0 0.55rem; font-size: 0.88rem; color: var(--muted); line-height: 1.4; }
+.weight-mean { margin: 0.45rem 0 0; font-size: 0.92rem; color: var(--muted); }
+.weight-mix { margin: 0.4rem 0 0; font-size: 1.05rem; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 0.45rem; margin: 0.6rem 0 1rem; }
+.choice.chip { width: auto; display: inline-flex; margin: 0; padding: 0.45rem 0.8rem; }
+.choice.chip.on { outline: 2px solid var(--accent); }
+.choice input { width: auto; margin-right: 0.5rem; }
 
 .score-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.7rem; }
 .score { background: #fff; border-radius: 1.1rem; padding: 0.9rem 1rem; }
 .score.top { outline: 2px solid var(--accent); }
 .score .n { font-size: 2.3rem; font-family: "EB Garamond", Georgia, serif; }
+.signal-list { display: flex; flex-direction: column; gap: 0.45rem; margin: 0.8rem 0 1.2rem; }
+.signal {
+  display: grid; grid-template-columns: 9.5rem 1fr; gap: 0.6rem; align-items: start;
+  border-radius: 1rem; padding: 0.7rem 0.9rem; font-size: 0.92rem; line-height: 1.4;
+}
+.signal-k { font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; padding-top: 0.15rem; }
+.signal.pos { background: rgba(90, 160, 120, 0.22); }
+.signal.neg { background: rgba(196, 110, 90, 0.22); }
 .gap {
   display: inline-block; margin: 0.2rem 0.3rem 0 0; padding: 0.25rem 0.6rem;
   border-radius: 999px; background: rgba(232, 196, 120, 0.4); font-size: 0.78rem;
@@ -132,11 +149,41 @@ input[type="range"] { accent-color: var(--accent); }
 .verdict.go { background: rgba(90, 160, 120, 0.28); }
 .verdict.caution { background: rgba(232, 196, 120, 0.45); }
 .verdict.no-go { background: rgba(196, 110, 90, 0.28); }
-.match-deck { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.8rem; }
+.match-deck { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.8rem; }
 .deck-card .n { font-family: "EB Garamond", Georgia, serif; font-size: 1.8rem; margin: 0.3rem 0 0; }
-.deck-card.on { outline: 2px solid var(--accent); }
-.ask { margin-top: 1.3rem; padding-top: 1rem; border-top: 1px solid var(--line); }
-@media (max-width: 860px) {
-  .pair-stack, .match-deck { grid-template-columns: 1fr; }
-  .pair-x { display: none; }
+.card.on { outline: 2px solid var(--accent); }
+.card-points { margin: 0.85rem 0 0; }
+.card-points > div { display: grid; grid-template-columns: 5.2rem 1fr; gap: 0.4rem 0.7rem; margin: 0.45rem 0; }
+.card-points dt { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0.15rem 0 0; }
+.card-points dd { margin: 0; font-size: 0.92rem; line-height: 1.4; }
+.pairing-title { font-size: 1.85rem; margin: 0.45rem 0 0.2rem; }
+.deck-card .card-points > div { grid-template-columns: 4.6rem 1fr; }
+.walk-actions { margin: 0.85rem 0 0.2rem; }
+.deck-card h3 { font-size: 1.2rem; line-height: 1.3; }
+.insight p { color: var(--muted); line-height: 1.5; }
+.insight p:first-of-type { color: var(--ink); font-size: 1.08rem; }
+.ask-fab {
+  position: fixed; right: 1.2rem; bottom: 1.2rem; z-index: 40;
+  width: 3.2rem; height: 3.2rem; padding: 0; border: 0; cursor: pointer;
+  border-radius: 999px;
+  background: var(--accent); color: #fff;
+  font-family: "EB Garamond", Georgia, serif; font-size: 1.7rem; line-height: 1;
+  box-shadow: 0 10px 24px rgba(76, 111, 255, 0.28);
 }
+.ask-panel {
+  position: fixed; right: 1.2rem; bottom: 4.4rem; z-index: 40;
+  width: min(380px, calc(100vw - 2rem));
+  max-height: min(28rem, 70vh);
+  display: flex; flex-direction: column;
+  background: var(--glass); backdrop-filter: blur(16px);
+  border: 1px solid rgba(255,255,255,0.65); border-radius: 1.4rem; padding: 0.9rem;
+}
+.ask-panel[hidden] { display: none; }
+.ask-head { display: flex; justify-content: space-between; align-items: center; gap: 0.6rem; margin-bottom: 0.6rem; }
+.ask-log { overflow: auto; flex: 1; display: flex; flex-direction: column; gap: 0.45rem; min-height: 8rem; }
+.ask-msg { margin: 0; }
+.ask-msg span { display: inline-block; padding: 0.45rem 0.7rem; border-radius: 0.9rem; background: #fff; }
+.ask-msg.you { text-align: right; }
+.ask-msg.you span { background: var(--accent); color: #fff; }
+.been-box { margin-top: 1rem; padding-top: 0.8rem; border-top: 1px solid var(--line); }
+.been-box .choice { margin-top: 0.5rem; }

@@ -1,16 +1,22 @@
 export const UNKNOWN = "unknown";
 export const TYPOLOGIES = ["adu", "duplex", "small_multifamily"];
 export const TYPOLOGY_LABELS = {
-  adu: "ADU",
-  duplex: "Duplex",
-  small_multifamily: "Small multifamily",
+  adu: "Accessory dwelling",
+  duplex: "Two-family house",
+  small_multifamily: "Small apartment building",
 };
 export const FACTORS = ["feasibility", "demand_fit", "affordability_impact", "climate_proxy"];
 export const FACTOR_LABELS = {
-  feasibility: "Can we build it",
-  demand_fit: "Neighborhood rents",
-  affordability_impact: "Cost burden",
-  climate_proxy: "Transit proximity",
+  feasibility: "Allowed to build, lot is big enough",
+  demand_fit: "Neighbors who rent",
+  affordability_impact: "Neighbors stretched on rent",
+  climate_proxy: "Close to a bus stop",
+};
+export const FACTOR_HELP = {
+  feasibility: "Zoning permission plus whether the lot is large enough for this housing type.",
+  demand_fit: "Share of nearby households that rent, from the Census. Not a waitlist.",
+  affordability_impact: "Share of nearby renters who spend 30% or more of income on rent. Typical neighborhood rent is ACS median gross rent, not a listing for this lot.",
+  climate_proxy: "Walking distance to the nearest Port Authority bus stop. Not a pollution score.",
 };
 const ZONING_FIELDS = {
   adu: "zoning_allows_adu",
@@ -188,18 +194,34 @@ export function ranked(result) {
   return [...numeric, ...missing];
 }
 
+export const PGH_MEDIAN_GROSS_RENT = 1261;
+
+export function typicalRentUsd(row) {
+  const raw = readField(row, "tract_median_gross_rent");
+  if (isUnknown(raw)) return UNKNOWN;
+  const n = Number(String(raw).replace(/,/g, ""));
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : UNKNOWN;
+}
+
+export function predictedRentUsd(row) {
+  const inc = parseFloatField(row, "tract_median_income");
+  if (isUnknown(inc) || inc <= 0) return UNKNOWN;
+  return Math.round((inc * 0.3) / 12);
+}
+
 export function missingFields(row) {
   const checks = [
-    ["tract_renter_share", "Renter share"],
-    ["tract_rent_burden_pct", "Rent burden"],
-    ["tract_median_income", "Median income"],
-    ["steep_slope", "Steep slope"],
+    ["tract_renter_share", "Neighbors who rent"],
+    ["tract_rent_burden_pct", "Neighbors stretched on rent"],
+    ["tract_median_income", "Typical neighborhood income"],
+    ["tract_median_gross_rent", "Typical rent nearby"],
+    ["steep_slope", "Steep hillside"],
   ];
   return checks.filter(([k]) => isUnknown(readField(row, k))).map(([, label]) => label);
 }
 
 export function acsGaps(row) {
-  return ["tract_renter_share", "tract_rent_burden_pct", "tract_median_income"].filter((k) =>
+  return ["tract_renter_share", "tract_rent_burden_pct", "tract_median_income", "tract_median_gross_rent"].filter((k) =>
     isUnknown(readField(row, k))
   );
 }

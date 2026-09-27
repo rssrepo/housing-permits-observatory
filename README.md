@@ -25,7 +25,7 @@ A CDC-scale Streamlit tool that scores three housing types (ADU, duplex, small m
 - No measured climate emissions — transit distance + density is a proxy.
 - Weights are one CDC-style framework, not a neutral standard.
 - Zoning calls are a Chapter 911 use-table reading for `zoned_as`, not a ROZA or variance outcome. Pittsburgh still had **no citywide ADU use** as of this build (CB 2025-1545 pending).
-- No rent forecast, no household-flow model. ACS renter share and rent burden are tract proxies only.
+- Typical rent nearby is ACS 2024 5-year median gross rent (B25064) for tracts already pulled, benchmarked against Pittsburgh city median ($1,261). Predicted carry is 30% of tract median household income. Not a listing price for a unit that does not exist yet. Other tracts stay blank.
 
 ## Data sources
 
@@ -33,7 +33,7 @@ A CDC-scale Streamlit tool that scores three housing types (ADU, duplex, small m
   Dump: `https://data.wprdc.org/datastore/dump/e1dcee82-9179-4306-8167-5891915b62a7`  
   **License/terms:** the dataset page’s click-through Data Use Agreement (attribution, no warranty, do not redistribute non-public information).
 - Pittsburgh Zoning Code, Chapter 911 Primary Uses. https://ecode360.com/45476528
-- ACS 2024 5-year (2020–2024) via Census Reporter for tracts `42003050100` and `42003030500`. Tract `42003563200` is **not in that release**; those ACS cells are blank.
+- ACS 2024 5-year (2020–2024) via Census Reporter for tracts `42003050100` and `42003030500` (renter share, rent burden, median household income, median gross rent B25064). Tract `42003563200` is **not in that release**; those ACS cells are blank.
 - Pittsburgh Regional Transit Stops (WPRDC GeoJSON) — nearest-stop distance in feet, computed once and stored in `sites.csv`.
 
 ## Libraries / tools

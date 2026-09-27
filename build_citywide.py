@@ -136,6 +136,7 @@ def main() -> None:
                 "tract_median_income": row.get("tract_median_income", ""),
                 "tract_renter_share": row.get("tract_renter_share", ""),
                 "tract_rent_burden_pct": row.get("tract_rent_burden_pct", ""),
+                "tract_median_gross_rent": row.get("tract_median_gross_rent", ""),
                 "acs_note": row.get("acs_note", ""),
             }
     seed_by_pin = {str(r["pin"]): r.to_dict() for _, r in seed.iterrows()}
@@ -179,6 +180,7 @@ def main() -> None:
             "tract_median_income": acs.get("tract_median_income", ""),
             "tract_renter_share": acs.get("tract_renter_share", ""),
             "tract_rent_burden_pct": acs.get("tract_rent_burden_pct", ""),
+            "tract_median_gross_rent": acs.get("tract_median_gross_rent", ""),
             "acs_note": acs.get(
                 "acs_note",
                 "ACS not pulled for this tract this weekend. Left unknown, not filled from a neighbor.",
@@ -205,6 +207,7 @@ def main() -> None:
                 "tract_median_income",
                 "tract_renter_share",
                 "tract_rent_burden_pct",
+                "tract_median_gross_rent",
                 "acs_note",
                 "transit_distance_ft",
                 "transit_note",

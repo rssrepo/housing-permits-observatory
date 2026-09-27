@@ -1,4 +1,4 @@
-const KEY = "hpo_session_v1";
+const KEY = "hpo_session_v2";
 
 export const DEMO = { email: "cdc@hillcdc.org", password: "pittsburgh", name: "Maya Chen", org: "Hill District CDC" };
 
@@ -37,9 +37,18 @@ export function signIn({ email, password, name, org }) {
     name: name || existing?.name || (isDemo ? DEMO.name : e.split("@")[0]),
     org: org || existing?.org || (isDemo ? DEMO.org : "Your CDC"),
     role: existing?.role || (isDemo ? "cdc" : null),
-    weights: existing?.weights || defaultWeights(),
+    weights: { ...defaultWeights(), ...(existing?.weights || {}) },
     onboarded: existing?.onboarded || false,
     lastSiteId: existing?.lastSiteId || "centre-2523",
+    missionSet: existing?.missionSet || false,
+    missionPlaces: existing?.missionPlaces || [],
+    missionType: existing?.missionType || "duplex",
+    missionTypes: existing?.missionTypes || (existing?.missionType === "any" ? ["adu", "duplex", "small_multifamily"] : [existing?.missionType || "duplex"]),
+    missionForSale: existing?.missionForSale !== false,
+    missionByRight: existing?.missionByRight !== false,
+    lotVisits: existing?.lotVisits || [],
+    extraWalks: existing?.extraWalks || [],
+    visitsAsked: existing?.visitsAsked || false,
     createdAt: existing?.createdAt || new Date().toISOString(),
   };
   saveSession(session);
