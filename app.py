@@ -14,7 +14,6 @@ from scoring import (
     FACTORS,
     TYPOLOGIES,
     TYPOLOGY_LABELS,
-    UNKNOWN,
     is_unknown,
     load_sites,
     ranked,
@@ -25,6 +24,119 @@ from scoring import (
 
 ROOT = Path(__file__).resolve().parent
 SITES_PATH = ROOT / "sites.csv"
+
+CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,500;0,600;1,500&family=Outfit:wght@400;500;600&display=swap');
+html, body, [class*="css"] { font-family: Outfit, ui-sans-serif, system-ui, sans-serif; }
+.stApp {
+  background:
+    radial-gradient(900px 420px at 78% -8%, rgba(255, 186, 140, 0.42), transparent 55%),
+    radial-gradient(700px 380px at 12% 0%, rgba(120, 178, 230, 0.45), transparent 50%),
+    linear-gradient(180deg, #8ec4ee 0%, #d5e7f6 26%, #eef3f7 52%, #f6f3ee 100%);
+}
+.stApp, .stApp p, .stApp li, .stApp label { color: #1A2230; }
+#MainMenu, header[data-testid="stHeader"], .stDeployButton,
+footer, [data-testid="stToolbar"], [data-testid="stDecoration"] { display: none !important; }
+.eyebrow {
+  display: inline-flex; padding: 0.28rem 0.7rem; border-radius: 999px;
+  background: rgba(255,255,255,0.55); border: 1px solid rgba(255,255,255,0.7);
+  font-size: 0.68rem; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 500; color: #3a4658;
+}
+h1, .hero-title {
+  font-family: "EB Garamond", Georgia, serif !important; font-weight: 500 !important;
+  letter-spacing: -0.03em; line-height: 1.08; text-wrap: balance;
+}
+.hero-title { font-size: clamp(2.2rem, 4.5vw, 3.2rem); margin: 0.35rem 0 0.35rem; color: #152033; }
+.hero-lede { max-width: 36rem; font-size: 1.02rem; line-height: 1.5; color: #3d4a5c; }
+.kicker { font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase; color: #66758a; font-weight: 500; }
+.answer {
+  font-family: "EB Garamond", Georgia, serif; font-size: clamp(1.5rem, 3vw, 2.05rem);
+  line-height: 1.2; margin: 0.4rem 0 1rem; color: #152033; text-wrap: balance;
+}
+.score-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.8rem; margin: 0.6rem 0 1rem; }
+@media (max-width: 900px) { .score-row { grid-template-columns: 1fr; } }
+.score-card { background: rgba(255,255,255,0.82); border-radius: 1.2rem; padding: 1rem 1.1rem; }
+.score-card.top { outline: 2px solid #4C6FFF; }
+.score-card .rank { font-size: 0.68rem; letter-spacing: 0.16em; text-transform: uppercase; color: #7a8798; }
+.score-card .name { font-size: 0.95rem; font-weight: 500; margin-top: 0.2rem; }
+.score-card .num {
+  font-family: "EB Garamond", Georgia, serif; font-size: 2.5rem; font-variant-numeric: tabular-nums;
+  line-height: 1; margin-top: 0.45rem;
+}
+.score-card.missing .num { color: #8a93a3; font-size: 1.5rem; }
+.why { background: rgba(255,255,255,0.72); border-radius: 1.2rem; padding: 1rem 1.15rem; max-width: 40rem; }
+.why li { margin: 0.35rem 0; }
+.gap {
+  display: inline-block; margin: 0.2rem 0.35rem 0.2rem 0; padding: 0.28rem 0.65rem;
+  border-radius: 999px; background: rgba(232, 196, 120, 0.35); font-size: 0.8rem;
+}
+div.stButton > button {
+  border-radius: 999px !important; padding: 0.45rem 1.15rem !important;
+  background: #4C6FFF !important; color: white !important; border: 0 !important; font-weight: 500 !important;
+}
+</style>
+"""
+
+ZONING_PLAIN = {
+    "by_right": "allowed by right",
+    "conditional": "conditional",
+    "not_allowed": "not allowed",
+}
+
+
+def shown(row: dict, key: str) -> str:
+    value = read_field(row, key)
+    return "Unknown" if is_unknown(value) else str(value)
+
+
+def zoning_plain(row: dict, key: str) -> str:
+    value = read_field(row, key)
+    if is_unknown(value):
+        return "Unknown"
+    return ZONING_PLAIN.get(str(value).lower(), str(value))
+
+
+def why_winner(row: dict, result: dict, winner: str) -> list[str]:
+    factors = result["typologies"][winner]["factors"]
+    lines = []
+    zkey = {
+        "adu": "zoning_allows_adu",
+        "duplex": "zoning_allows_duplex",
+        "small_multifamily": "zoning_allows_small_multifamily",
+    }[winner]
+    lines.append(
+        f"Zoning: {TYPOLOGY_LABELS[winner]} is {zoning_plain(row, zkey)} in {shown(row, 'zoned_as')} "
+        f"({shown(row, 'parc_sq_ft')} sq ft lot)."
+    )
+    demand = factors["demand_fit"]["score"]
+    if is_unknown(demand):
+        lines.append("Neighborhood renter share: no ACS data for this tract, so demand was left out of the score.")
+    else:
+        lines.append(f"Neighborhood renter share is {shown(row, 'tract_renter_share')}% (ACS). That supports rental product.")
+    burden = factors["affordability_impact"]["score"]
+    if is_unknown(burden):
+        lines.append("Rent burden: no ACS data, so affordability was left out of the score (not treated as zero).")
+    else:
+        lines.append(f"About {shown(row, 'tract_rent_burden_pct')}% of renters here are cost-burdened (ACS).")
+    dist = factors["climate_proxy"]["score"]
+    if not is_unknown(dist):
+        lines.append(f"Nearest PRT stop is {shown(row, 'transit_distance_ft')} ft away (a climate proxy, not emissions).")
+    return lines
+
+
+def missing_labels(row: dict) -> list[str]:
+    checks = [
+        ("tract_renter_share", "renter share"),
+        ("tract_rent_burden_pct", "rent burden"),
+        ("tract_median_income", "median income"),
+        ("steep_slope", "steep slope"),
+        ("transit_distance_ft", "transit distance"),
+        ("zoning_allows_adu", "ADU zoning"),
+        ("zoning_allows_duplex", "duplex zoning"),
+        ("zoning_allows_small_multifamily", "small multifamily zoning"),
+    ]
+    return [label for key, label in checks if is_unknown(read_field(row, key))]
 
 
 def ai_explain(payload: dict) -> str:
@@ -56,12 +168,8 @@ def ai_explain(payload: dict) -> str:
     return r.json()["choices"][0]["message"]["content"].strip()
 
 
-st.set_page_config(page_title="Typology Matchmaker", layout="wide")
-st.title("Housing typology matchmaker")
-st.caption(
-    "CDC-scale decision support for a handful of real City of Pittsburgh parcels — "
-    "not a citywide model, not a zoning opinion, not measured emissions."
-)
+st.set_page_config(page_title="Typology Matchmaker", layout="centered")
+st.markdown(CSS, unsafe_allow_html=True)
 
 if not SITES_PATH.exists():
     st.error("sites.csv is missing. Nothing was estimated to replace it.")
@@ -78,23 +186,34 @@ if sites.empty or "site_id" not in sites.columns:
     st.stop()
 
 labels = {
-    row["site_id"]: (row.get("label") or row.get("address") or row["site_id"])
-    for row in sites.to_dict(orient="records")
+    rec["site_id"]: (rec.get("label") or rec.get("address") or rec["site_id"])
+    for rec in sites.to_dict(orient="records")
 }
 
-st.sidebar.markdown("### 1. Pick a site")
-site_id = st.sidebar.radio(
-    "Candidate parcel",
-    options=list(labels),
-    format_func=lambda sid: labels[sid],
+st.markdown('<span class="eyebrow">For a CDC staffer  ·  four Pittsburgh lots</span>', unsafe_allow_html=True)
+st.markdown('<h1 class="hero-title">Pick a site. See what type of housing fits.</h1>', unsafe_allow_html=True)
+st.markdown(
+    '<p class="hero-lede">You are choosing among ADU, duplex, and small multifamily. '
+    "This is a ranking under your priorities, not a permit.</p>",
+    unsafe_allow_html=True,
 )
 
-st.sidebar.markdown("### 2. Your weighting choice")
-st.sidebar.caption("These sliders are a value judgment, not data. They are normalized to 100%.")
-w_feas = st.sidebar.slider("Feasibility", 0, 100, 25)
-w_demand = st.sidebar.slider("Demand fit", 0, 100, 25)
-w_aff = st.sidebar.slider("Affordability impact", 0, 100, 25)
-w_clim = st.sidebar.slider("Climate (proxy)", 0, 100, 25)
+st.markdown('<p class="kicker">1. Choose a parcel</p>', unsafe_allow_html=True)
+site_id = st.radio(
+    "Site",
+    options=list(labels),
+    format_func=lambda sid: labels[sid],
+    label_visibility="collapsed",
+)
+
+with st.expander("2. Optional: change what you care about (weights)"):
+    st.caption("These sliders are your value judgment. They are not in the data. They sum to 100% after normalize.")
+    w_feas = st.slider("Can we build it (zoning + lot)", 0, 100, 25)
+    w_demand = st.slider("Does the neighborhood rent", 0, 100, 25)
+    w_aff = st.slider("Are renters cost-burdened", 0, 100, 25)
+    w_clim = st.slider("Close to transit (climate proxy)", 0, 100, 25)
+    st.caption("Leave these at 25 if you just want an even split.")
+
 weights = {
     "feasibility": w_feas,
     "demand_fit": w_demand,
@@ -104,177 +223,113 @@ weights = {
 
 row = site_record(sites, site_id)
 result = score_site(row, weights)
-norm = result["weights"]
-
-st.sidebar.markdown(
-    f"Normalized: feasibility {norm['feasibility']:.0%} · "
-    f"demand {norm['demand_fit']:.0%} · "
-    f"affordability {norm['affordability_impact']:.0%} · "
-    f"climate {norm['climate_proxy']:.0%}"
-)
-
-# --- Site facts (from the CSV only) ---
-st.subheader("Selected site (from data)")
-c1, c2, c3, c4 = st.columns(4)
-c1.markdown(f"**Address**  \n{read_field(row, 'address') if not is_unknown(read_field(row, 'address')) else 'no data'}")
-c2.markdown(f"**Zoning**  \n{read_field(row, 'zoned_as') if not is_unknown(read_field(row, 'zoned_as')) else 'no data'}")
-c3.markdown(f"**Lot sq ft**  \n{read_field(row, 'parc_sq_ft') if not is_unknown(read_field(row, 'parc_sq_ft')) else 'no data'}")
-c4.markdown(f"**Status**  \n{read_field(row, 'current_status') if not is_unknown(read_field(row, 'current_status')) else 'no data'}")
-
-facts = pd.DataFrame(
-    [
-        ["PIN", read_field(row, "pin")],
-        ["Neighborhood", read_field(row, "neighborhood_name")],
-        ["Inventory type", read_field(row, "inventory_type")],
-        ["Class", read_field(row, "class")],
-        ["Census tract (WPRDC)", read_field(row, "census_tract")],
-        ["Median HH income (ACS)", read_field(row, "tract_median_income")],
-        ["Renter share % (ACS)", read_field(row, "tract_renter_share")],
-        ["Rent burden 30%+ (ACS)", read_field(row, "tract_rent_burden_pct")],
-        ["Transit distance (ft)", read_field(row, "transit_distance_ft")],
-        ["Steep slope", read_field(row, "steep_slope")],
-        ["ADU zoning", read_field(row, "zoning_allows_adu")],
-        ["Duplex zoning", read_field(row, "zoning_allows_duplex")],
-        ["Small multifamily zoning", read_field(row, "zoning_allows_small_multifamily")],
-    ],
-    columns=["Field", "Value"],
-)
-facts["Value"] = facts["Value"].map(lambda v: "Unknown/not available" if is_unknown(v) else v)
-st.dataframe(facts, width="stretch", hide_index=True)
-
-note_z = read_field(row, "zoning_note")
-note_a = read_field(row, "acs_note")
-if not is_unknown(note_z):
-    st.caption(f"Zoning note: {note_z}")
-if not is_unknown(note_a):
-    st.caption(f"ACS note: {note_a}")
-
-# --- Ranking chart ---
-st.subheader("Typology ranking under your weights")
 order = ranked(result)
-chart_rows = []
-for typ, score in order:
-    if is_unknown(score):
-        st.info(
-            f"**{TYPOLOGY_LABELS[typ]}:** composite is Insufficient data "
-            "(no scored factors). It is omitted from the chart, not plotted as 0."
-        )
-        continue
-    chart_rows.append({"typology": TYPOLOGY_LABELS[typ], "composite": float(score)})
+winner = order[0][0]
+winner_score = order[0][1]
+winner_name = TYPOLOGY_LABELS[winner]
+addr = shown(row, "address")
 
-if chart_rows:
-    st.bar_chart(pd.DataFrame(chart_rows).set_index("typology"))
+st.markdown('<p class="kicker" style="margin-top:1.2rem">3. Read the recommendation</p>', unsafe_allow_html=True)
+if is_unknown(winner_score):
+    rec = f"Not enough scored factors to rank types on {addr}."
 else:
-    st.warning("No typology has enough data to rank. Filters and other sites still work.")
+    rec = (
+        f"On {addr}, <em>{winner_name.lower()}</em> ranks first "
+        f"({float(winner_score):.0f} / 100) under the weights you set."
+    )
+st.markdown(f'<p class="answer">{rec}</p>', unsafe_allow_html=True)
 
-# --- Factor table: data vs unknown vs weights ---
-st.markdown("#### From data vs. unknown vs. your weighting choice")
-st.markdown(
-    "- **From data** — a 0–100 factor score with the CSV field it used.  \n"
-    "- **Unknown/not available** — the input cell was blank or unusable; shown as "
-    "Insufficient data, **not** scored as 0.  \n"
-    "- **Your weighting choice** — the sliders in the sidebar; they are not in the CSV."
-)
+cards = []
+for i, (typ, score) in enumerate(order, start=1):
+    missing = is_unknown(score)
+    num = "n/a" if missing else f"{float(score):.0f}"
+    klass = "score-card missing" if missing else ("score-card top" if i == 1 else "score-card")
+    cards.append(
+        f'<div class="{klass}"><div class="rank">0{i}</div>'
+        f'<div class="name">{TYPOLOGY_LABELS[typ]}</div>'
+        f'<div class="num">{num}</div></div>'
+    )
+st.markdown('<div class="score-row">' + "".join(cards) + "</div>", unsafe_allow_html=True)
 
-table_rows = []
-for typ in TYPOLOGIES:
-    block = result["typologies"][typ]
-    for fac in FACTORS:
-        cell = block["factors"][fac]
-        score = cell["score"]
-        table_rows.append(
-            {
-                "Typology": TYPOLOGY_LABELS[typ],
-                "Factor": FACTOR_LABELS[fac],
-                "State": "Unknown/not available" if is_unknown(score) else "From data",
-                "Score": "Insufficient data" if is_unknown(score) else str(score),
-                "Source field": cell.get("source", ""),
-                "How it was computed": cell.get("detail", ""),
-            }
-        )
-    comp = block["composite"]
-    dropped = comp.get("dropped_factors") or []
-    table_rows.append(
+st.markdown('<p class="kicker">Why (for the top type only)</p>', unsafe_allow_html=True)
+why_html = "".join(f"<li>{line}</li>" for line in why_winner(row, result, winner))
+st.markdown(f'<div class="why"><ul>{why_html}</ul></div>', unsafe_allow_html=True)
+
+gaps = missing_labels(row)
+if gaps:
+    st.markdown('<p class="kicker" style="margin-top:1rem">Unknown on this site</p>', unsafe_allow_html=True)
+    st.markdown(
+        "".join(f'<span class="gap">{g}</span>' for g in gaps)
+        + "<p style='font-size:0.85rem;color:#5a6778;margin-top:0.5rem'>Unknown fields are excluded from the score. They are not entered as zero.</p>",
+        unsafe_allow_html=True,
+    )
+
+st.caption("A City Planning / PLI review still has to happen before anyone buys drawings.")
+
+with st.expander("Parcel snapshot"):
+    st.write(
         {
-            "Typology": TYPOLOGY_LABELS[typ],
-            "Factor": "Composite (usable factors only)",
-            "State": "Unknown/not available" if is_unknown(comp["score"]) else "From data + your weights",
-            "Score": "Insufficient data" if is_unknown(comp["score"]) else str(comp["score"]),
-            "Source field": "weights sliders; missing factors excluded (not zeroed)",
-            "How it was computed": (
-                f"dropped={dropped}" if dropped else "all four factors present"
-            ),
+            "Neighborhood": shown(row, "neighborhood_name"),
+            "Inventory": shown(row, "inventory_type"),
+            "Class": shown(row, "class"),
+            "PIN": shown(row, "pin"),
+            "ADU": zoning_plain(row, "zoning_allows_adu"),
+            "Duplex": zoning_plain(row, "zoning_allows_duplex"),
+            "Small multifamily": zoning_plain(row, "zoning_allows_small_multifamily"),
         }
     )
 
-st.dataframe(pd.DataFrame(table_rows), width="stretch", hide_index=True)
-
-# --- AI panel ---
-st.subheader("AI explanation")
-st.caption("AI-generated. Rankings above are computed in scoring.py before this call.")
-if st.button("Explain this ranking"):
-    facts_payload = {
-        "site": {k: read_field(row, k) for k in row},
-        "weights_normalized": norm,
-        "ranking": [
-            {
-                "typology": TYPOLOGY_LABELS[t],
-                "composite": s if not is_unknown(s) else "Insufficient data",
-            }
-            for t, s in order
-        ],
-        "factors": {
-            TYPOLOGY_LABELS[typ]: {
-                FACTOR_LABELS[fac]: {
-                    "score": result["typologies"][typ]["factors"][fac]["score"]
-                    if not is_unknown(result["typologies"][typ]["factors"][fac]["score"])
-                    else "Insufficient data",
-                    "source": result["typologies"][typ]["factors"][fac].get("source"),
+with st.expander("How each type was scored"):
+    st.caption("From data vs unknown vs your weights. Insufficient data is not a zero.")
+    table_rows = []
+    for typ in TYPOLOGIES:
+        block = result["typologies"][typ]
+        for fac in FACTORS:
+            cell = block["factors"][fac]
+            score = cell["score"]
+            table_rows.append(
+                {
+                    "Type": TYPOLOGY_LABELS[typ],
+                    "Factor": FACTOR_LABELS[fac],
+                    "State": "Unknown" if is_unknown(score) else "From data",
+                    "Score": "Insufficient data" if is_unknown(score) else str(score),
+                    "Source": cell.get("source", ""),
                 }
-                for fac in FACTORS
-            }
-            for typ in TYPOLOGIES
-        },
-        "task": (
-            "Explain why the top typology ranked first and what weight or data change "
-            "would be needed to flip the ranking. Call out any Insufficient data factors."
-        ),
-    }
-    try:
-        text = ai_explain(facts_payload)
-        st.markdown(f"**AI-generated (not a zoning determination):** {text}")
-    except Exception as exc:  # noqa: BLE001
-        st.error(f"Explanation request failed. No substitute text was generated.\n\n{exc}")
+            )
+    st.dataframe(pd.DataFrame(table_rows), width="stretch", hide_index=True)
 
-st.markdown("## What this does and doesn't show")
-st.markdown(
-    """
-- **A handful of illustrative sites**, pulled from WPRDC City-Owned Properties (Centre Ave
-  and/or CDC Property Reserve), not a citywide suitability surface.
-- **Climate scores are a proxy** (distance to the nearest PRT stop + a density bump), not
-  measured greenhouse-gas emissions or flood/heat risk.
-- **The four weights are one possible CDC framework**, not a neutral or official standard.
-  Move the sliders and the ranking is supposed to change.
-- **Issued zoning labels are not a permit.** `by_right` / `not_allowed` come from a reading
-  of Pittsburgh Zoning Code Chapter 911 for the district on the parcel. A planner still
-  has to confirm overlays, parking, slope, and lot standards.
-- **849 Vista St is a missing-data demo.** ACS 2024 5-year has no matching GeoID for WPRDC
-  tract `42003563200`, so renter share and rent burden stay blank. Those factors show
-  Insufficient data and are excluded from that site's composite — they are not scored as 0.
-- **ADU is scored `not_allowed` citywide in this build** because Pittsburgh does not yet
-  have a citywide ADU use (Council Bill 2025-1545 was pending as of this weekend). That
-  is a code-status call, not a prediction that the bill will fail.
-- **Not legal, financial, or zoning advice.**
-"""
-)
+with st.expander("Ask AI to phrase this ranking"):
+    st.caption("Optional. Numbers are already computed. This only writes 2-3 sentences.")
+    if st.button("Explain this ranking"):
+        payload = {
+            "site": addr,
+            "winner": winner_name,
+            "ranking": [
+                {"type": TYPOLOGY_LABELS[t], "score": s if not is_unknown(s) else "Insufficient data"}
+                for t, s in order
+            ],
+            "why": why_winner(row, result, winner),
+            "unknown": gaps,
+        }
+        try:
+            st.markdown(f"**AI-generated (not a zoning determination):** {ai_explain(payload)}")
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Explanation request failed. No substitute text was generated.\n\n{exc}")
 
-st.markdown("### Sources")
-st.markdown(
-    """
-- City-Owned Properties, WPRDC: https://data.wprdc.org/dataset/city-owned-properties  
-  (CSV dump `e1dcee82-9179-4306-8167-5891915b62a7`). Data Use Agreement on that dataset page.
-- Pittsburgh Zoning Code, Chapter 911 Primary Uses: https://ecode360.com/45476528
-- ACS 2024 5-year (2020–2024) via Census Reporter for tracts 42003050100 and 42003030500
-- Pittsburgh Regional Transit Stops (WPRDC GeoJSON) for nearest-stop distance
+with st.expander("Limits and sources"):
+    st.markdown(
+        """
+- Four illustrative city-owned sites, not a citywide model.
+- Climate is distance to a PRT stop, not measured emissions.
+- Weights are one CDC-style framework.
+- Zoning is a Chapter 911 reading, not a ROZA or permit.
+- Vista St has no matching ACS tract in the 2024 5-year file; those cells stay blank.
+- ADU is not_allowed citywide in this build (CB 2025-1545 not adopted).
+- Not legal, financial, or zoning advice.
+
+Sources: [WPRDC City-Owned Properties](https://data.wprdc.org/dataset/city-owned-properties) (Data Use Agreement on that page);
+[Pittsburgh Zoning Code Ch. 911](https://ecode360.com/45476528);
+ACS 2024 5-year via Census Reporter (tracts 501 and 305);
+WPRDC PRT stops.
 """
-)
+    )

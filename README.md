@@ -10,16 +10,14 @@ A CDC-scale Streamlit tool that scores three housing types (ADU, duplex, small m
 
 ## Sites
 
-Hand-picked from WPRDC City-Owned Properties after `fetch_sites.py` filtered to Centre Ave **or** `inventory_type = CDC Property Reserve`:
+`sites.csv` is the **Hill CDC genesis sample** (four lots). The live studio reads `web/data/sites.json`: **3,260 vacant city-owned lots** in 77 neighborhoods, built by `build_citywide.py` from the WPRDC dump. Parks, greenways, hold-for-study, and permanent city ownership are out. ACS is filled only for tracts already pulled in `sites.csv` (mainly 501 and 305); other tracts stay blank.
 
-| Site | Why it is in the set |
+| Genesis sample | Why it was picked first |
 | --- | --- |
-| 2523 Centre Ave (Middle Hill, RM-M, Available for Sale) | Hill District corridor, URA transfer, vacant land |
-| 2901 Centre Ave (Middle Hill, LNC, Available for Sale) | Same corridor, neighborhood commercial district |
-| 1800 Cliff St (Crawford-Roberts, RM-M, CDC Property Reserve) | Already earmarked for CDC use; larger lot |
-| 849 Vista St (East Allegheny, R1A-VH, CDC Property Reserve) | Different district; **ACS geography does not match** — left blank |
-
-`sites.csv` is the ground-truth table the app reads. Empty cells stay empty.
+| 2523 Centre Ave (Middle Hill, RM-M, Available for Sale) | Hill corridor, URA transfer |
+| 2901 Centre Ave (Middle Hill, LNC, Available for Sale) | Same corridor, LNC |
+| 1800 Cliff St (Crawford-Roberts, RM-M, CDC Property Reserve) | CDC earmark, larger lot |
+| 849 Vista St (East Allegheny, R1A-VH, CDC Property Reserve) | ACS geography does not match; left blank |
 
 ## What it does NOT do
 
@@ -58,6 +56,24 @@ This prototype compares three typologies on four real publicly owned sites using
 A CDC or planner should confirm the parcel with City Planning / OneStopPGH (ROZA), read overlays and lot standards that this scorecard does not encode, and treat ACS tract figures as neighborhood context rather than site-level household data. This dashboard is not a substitute for that review.
 
 ## How to run
+
+Studio (matchmaker for judges, static):
+
+```bash
+python3 serve.py
+```
+
+Open http://127.0.0.1:8080 · demo `cdc@hillcdc.org` / `pittsburgh` · you land on **Match**.
+
+Rebuild the citywide lot file from WPRDC (writes `web/data/sites.json`):
+
+```bash
+python3 build_citywide.py
+```
+
+Open http://127.0.0.1:8080 · demo `cdc@hillcdc.org` / `pittsburgh` · you land on **Match**.
+
+Streamlit scorecard (same four parcels):
 
 ```bash
 python3 -m venv .venv
